@@ -1,0 +1,56 @@
+:root {
+  --ip-primary: #005bac;
+  --ip-primary-hover: #0070d8;
+  --ip-accent: #00a650;
+  --ip-bg: #f2f4f8;
+  --ip-surface: #ffffff;
+  --ip-canvas-bg: #1f2733;
+  --ip-text: #1f2d3d;
+  --ip-text-secondary: #5e6d82;
+  --ip-text-muted: #a8b3c1;
+  --ip-border: #e4e9f0;
+  --ip-danger: #e02020;
+  --ip-warning: #f57c00;
+  --ip-notice: #f2b705;
+  --ip-info: #5b8def;
+  --ip-radius: 8px;
+  --ip-shadow: 0 1px 3px rgba(31, 45, 61, 0.08), 0 4px 14px rgba(31, 45, 61, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  color: var(--ip-text);
+  background: var(--ip-bg);
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c9d2dd;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8b3c1;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

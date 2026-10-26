@@ -1,0 +1,34 @@
+[package]
+name = "ir-inspection-tool"
+version = "0.1.0"
+description = "红外照片分析工具（配网无人机红外巡检离线分析）"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.6", features = ["dialog"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# thermal 0.3.1 -> indicatif 0.16.2 对 console 的范围过松(>=0.9.1,<1.0.0)，
+# 默认解析到 API 不兼容的 console 0.16.x（E0432: Term/Style/measure_text_width）。
+# 声明式精确锁定 + Cargo.lock 固定（勿单独执行 cargo update -p console）。
+console = "=0.15.11"
+# 解析 FLIR FFF 编码 R-JPEG（大疆御3T 辐射原图内嵌即此结构）；不启用 dji feature（避免 DIRP 私有 SDK）
+thermal = "0.3.1"
+# SQLite 巡检台账（bundled 免系统依赖，内网友好）
+rusqlite = { version = "0.40", features = ["bundled"] }
+# EXIF 元数据（GPS/拍摄时间/机型）
+kamadak-exif = "0.6.1"
+# 标注图 PNG 导出
+image = "0.25"
+# Word 巡检缺陷报告
+docx-rs = "0.4"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

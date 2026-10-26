@@ -1,0 +1,37 @@
+﻿# 依赖与构建产物
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/vendor/
+src-tauri/.cargo/
+
+# e2e 运行产物
+e2e/chrome-profile/
+e2e/*.log
+
+# 日志与截图
+*.log
+screenshot-*.png
+
+# 系统文件
+.DS_Store
+Thumbs.db
+# Editor / IDE
+.vscode/
+.idea/
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Runtime output & logs
+output/
+logs/
+*.pdb
+
+# Tauri generated dir (Tauri 2)
+src-tauri/gen/
+
+# Workspace tool metadata
+.codebuddy/

@@ -1,0 +1,12 @@
+﻿# Cross-platform line-ending normalization
+* text=auto eol=lf
+
+# Binary assets (no text merge/diff)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.JPG binary
+*.ico binary
+
+# Lockfiles keep LF
+pnpm-lock.yaml text eol=lf
