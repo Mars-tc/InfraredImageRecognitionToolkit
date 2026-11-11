@@ -1,0 +1,158 @@
+name: build-uos20
+
+# 交付构建：在 Debian 10 (buster, glibc 2.28) 环境中编译，
+# 产出可直接在统信 UOS20（Debian 10 底层）安装的 deb / AppImage。
+# 本机（Deepin 25, glibc 2.38）编译的产物 glibc 过高，无法安装到 UOS20，
+# 因此交付包统一由本流水线产出，详见 README「交付构建」章节。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # 前端构建要求 Node ^20.19 || >=22.12（Vite 8）；Node 官方二进制最低 glibc 2.28，可在 buster 运行
+  NODE_BUILD_VERSION: '20.19.4'
+  # image 0.25 要求 Rust >= 1.88.0
+  RUST_VERSION: '1.90.0'
+  # UOS20 目标 glibc 上限；构建产物不得依赖更高版本符号
+  TARGET_GLIBC: '2.28'
+
+jobs:
+  build:
+    name: 构建 UOS20 安装包（Debian 10 / glibc 2.28）
+    runs-on: ubuntu-22.04
+    container:
+      image: debian:buster
+    steps:
+      - name: 修正 apt 源并安装系统依赖
+        run: |
+          set -eux
+          # Debian 10 已 EOL，官方源下线，需切到归档源并关闭有效期校验
+          sed -i 's|deb.debian.org|archive.debian.org|g; s|security.debian.org|archive.debian.org|g' /etc/apt/sources.list
+          sed -i 's|^deb |deb [check-valid-until=no] |' /etc/apt/sources.list
+          apt-get update
+          # libxdo-dev：wry/tao 的 dox feature 链接需要；
+          # 未启用系统托盘，故不需要 ayatana / appindicator
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl file git patchelf xz-utils \
+            libfuse2 libgtk-3-dev librsvg2-dev libssl-dev \
+            libwebkit2gtk-4.0-dev libxdo-dev
+          rm -rf /var/lib/apt/lists/*
+
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        run: |
+          set -eux
+          curl -fsSL "https://nodejs.org/dist/v${NODE_BUILD_VERSION}/node-v${NODE_BUILD_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz
+          tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+          rm /tmp/node.tar.xz
+          node -v
+          npm -v
+
+      - name: 安装 pnpm
+        run: |
+          set -eux
+          # 与 package.json 的 packageManager 字段保持一致
+          npm install -g "pnpm@10.24.0"
+          pnpm --version
+
+      - name: 安装 Rust
+        run: |
+          set -eux
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile minimal
+          echo "${HOME}/.cargo/bin" >> "$GITHUB_PATH"
+          # rustup 装的脚本不会影响当前 shell，需显式加载后才能在本步校验版本
+          source "${HOME}/.cargo/env"
+          rustc --version
+          cargo --version
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 deb 安装包
+        # 使用项目自带的 @tauri-apps/cli，不依赖 cargo tauri 子命令
+        run: pnpm tauri build --bundles deb
+
+      - name: 校验产物 glibc 版本
+        run: |
+          set -eux
+          BIN="src-tauri/target/release/ir-inspection-tool"
+          test -x "${BIN}"
+          MAX=$(objdump -T "${BIN}" \
+            | grep -o 'GLIBC_[0-9]\+\(\.[0-9]\+\)\+' \
+            | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "产物依赖的最高 GLIBC 符号版本：${MAX}"
+          # 取两者中较高者：若高于 TARGET_GLIBC 则产物无法在 UOS20 上运行
+          HIGHEST=$(printf '%s\n' "${TARGET_GLIBC}" "${MAX}" | sort -V | tail -1)
+          if [ "${HIGHEST}" != "${TARGET_GLIBC}" ]; then
+            echo "错误：产物需要 GLIBC ${MAX}，超出 UOS20 可用的 ${TARGET_GLIBC}"
+            exit 1
+          fi
+
+      - name: 构建 AppImage（可选产物，失败不阻塞 deb）
+        continue-on-error: true
+        run: pnpm tauri build --bundles appimage
+
+      - name: 收集产物并生成校验和
+        run: |
+          set -eux
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p dist-artifacts
+          DEB=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
+          cp "${DEB}" "dist-artifacts/ir-inspection-tool_${VERSION}_amd64.deb"
+          if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
+            cp "$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)" \
+               "dist-artifacts/ir-inspection-tool_${VERSION}_amd64.AppImage"
+          fi
+          cd dist-artifacts
+          rm -f SHA256SUMS
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+          ls -lh
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: uos20-installers
+          path: dist-artifacts/
+          retention-days: 30
+
+  release:
+    name: 发布 GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: uos20-installers
+          path: dist-artifacts
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist-artifacts/*
+          name: 红外照片分析工具 ${{ github.ref_name }}
