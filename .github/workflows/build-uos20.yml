@@ -68,11 +68,16 @@ jobs:
       - name: 安装 Rust
         run: |
           set -eux
+          # 容器 job 的 HOME 不保证指向 rustup 的实际安装目录，
+          # 显式指定 CARGO_HOME / RUSTUP_HOME，避免出现 rustc: command not found（退出码 127）
+          export RUSTUP_HOME=/usr/local/rustup
+          export CARGO_HOME=/usr/local/cargo
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile minimal
-          echo "${HOME}/.cargo/bin" >> "$GITHUB_PATH"
-          # rustup 装的脚本不会影响当前 shell，需显式加载后才能在本步校验版本
-          source "${HOME}/.cargo/env"
+            | sh -s -- -y --no-modify-path --default-toolchain "${RUST_VERSION}" --profile minimal
+          echo "${CARGO_HOME}/bin" >> "$GITHUB_PATH"
+          export PATH="${CARGO_HOME}/bin:${PATH}"
+          echo "HOME=${HOME:-<未设置>} CARGO_HOME=${CARGO_HOME}"
+          ls -la "${CARGO_HOME}/bin"
           rustc --version
           cargo --version
 
