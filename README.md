@@ -40,6 +40,10 @@
 
 推荐用仓库自带的本机构建入口（自动把 `~/.cargo/bin` 加入 PATH，并在 pnpm 缺失时回退 corepack）：
 
+> 首次使用请先安装与 `Cargo.lock` 中 tauri crate（1.8.3）同版本的 tauri CLI：
+> `cargo install tauri-cli --version 1.8.3 --locked`
+> （npm 上的 `@tauri-apps/cli` 1.x 只发布到 1.6.3，与 1.8.3 主次版本不一致会被 CLI 拒绝执行）
+
 ```bash
 node scripts/build-local.mjs env      # 环境自检
 node scripts/build-local.mjs install  # 安装前端依赖
@@ -89,6 +93,7 @@ UOS20 内网机的安装包由 **GitHub Actions** 在 Debian 10 容器中构建�
 - 流水线：`.github/workflows/build-uos20.yml`（`debian:buster` 容器，glibc 2.28，与 UOS20 同源）
 - 触发：Actions 页手动 `Run workflow`；push 到 `main` 或提 PR 做构建校验；推送 `v*` 标签额外发布 GitHub Release
 - 产物：`ir-inspection-tool_0.1.0_amd64.deb`（必需）、`ir-inspection-tool_0.1.0_amd64.AppImage`（可选）、`SHA256SUMS`
+- 工具链：Node 20.19+、`pnpm@10.24.0`、Rust 1.90、**cargo 版 tauri CLI 1.8.3**（npm 上 `@tauri-apps/cli` 的 1.x 止于 1.6.3，与 `Cargo.lock` 的 tauri crate 1.8.3 主次版本不匹配会被 CLI 拒绝）
 - 校验：流水线断言产物依赖的最高 GLIBC 符号版本不超过 2.28，超出即判定构建失败
 
 **本机构建不产出交付包**：开发机 glibc 高于 UOS20（如 Deepin 25 为 2.38），AppImage 同样依赖宿主 glibc。完整说明与内网安装步骤见 [`packaging/README.md`](packaging/README.md)。

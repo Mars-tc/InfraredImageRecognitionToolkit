@@ -21,6 +21,8 @@ env:
   NODE_BUILD_VERSION: '20.19.4'
   # image 0.25 要求 Rust >= 1.88.0
   RUST_VERSION: '1.90.0'
+  # tauri crate 锁定为 1.8.3，CLI 必须同版本（npm 上 1.x CLI 止于 1.6.3，只能用 cargo 版）
+  TAURI_CLI_VERSION: '1.8.3'
   # UOS20 目标 glibc 上限；构建产物不得依赖更高版本符号
   TARGET_GLIBC: '2.28'
 
@@ -76,10 +78,16 @@ jobs:
             | sh -s -- -y --no-modify-path --default-toolchain "${RUST_VERSION}" --profile minimal
           echo "${CARGO_HOME}/bin" >> "$GITHUB_PATH"
           export PATH="${CARGO_HOME}/bin:${PATH}"
-          echo "HOME=${HOME:-<未设置>} CARGO_HOME=${CARGO_HOME}"
-          ls -la "${CARGO_HOME}/bin"
           rustc --version
           cargo --version
+
+      - name: 安装 tauri CLI（与 tauri crate 版本一致）
+        run: |
+          set -eux
+          # npm 上 @tauri-apps/cli 的 1.x 只发布到 1.6.3，
+          # 与 Cargo.lock 中的 tauri 1.8.3 不匹配会被 CLI 拒绝，故使用 cargo 版 1.8.3
+          cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked
+          cargo tauri --version
 
       - name: 缓存 Cargo 依赖
         uses: actions/cache@v4
@@ -94,8 +102,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: 构建 deb 安装包
-        # 使用项目自带的 @tauri-apps/cli，不依赖 cargo tauri 子命令
-        run: pnpm tauri build --bundles deb
+        run: |
+          set -o pipefail
+          cargo tauri build --bundles deb 2>&1 | tee /tmp/tauri-build.log
 
       - name: 校验产物 glibc 版本
         run: |
@@ -115,7 +124,7 @@ jobs:
 
       - name: 构建 AppImage（可选产物，失败不阻塞 deb）
         continue-on-error: true
-        run: pnpm tauri build --bundles appimage
+        run: cargo tauri build --bundles appimage
 
       - name: 收集产物并生成校验和
         run: |
@@ -133,6 +142,24 @@ jobs:
           sha256sum ./* > SHA256SUMS
           cat SHA256SUMS
           ls -lh
+
+      - name: 收集失败诊断（写入 Job Summary）
+        if: failure()
+        run: |
+          set +e
+          {
+            echo "### 构建失败诊断"
+            echo ""
+            echo "- webkit2gtk-4.0: $(pkg-config --modversion webkit2gtk-4.0 2>&1)"
+            echo "- tauri CLI: $(cargo tauri --version 2>&1 | head -1)"
+            echo "- rustc: $(rustc --version 2>&1)"
+            echo "- node: $(node -v 2>&1)"
+            echo ""
+            echo '```'
+            tail -60 /tmp/tauri-build.log 2>&1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          tail -60 /tmp/tauri-build.log 2>&1 || true
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4

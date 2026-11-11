@@ -10,6 +10,10 @@
 //   node scripts/build-local.mjs test     转发到 scripts/run-tests.mjs
 //   node scripts/build-local.mjs clean    清理 dist 与 release 产物
 //
+// 说明：npm 上的 @tauri-apps/cli 1.x 只发布到 1.6.3，而 Cargo.lock 锁定的
+// tauri crate 为 1.8.3，两者主次版本不一致时 CLI 会直接拒绝执行；
+// 因此优先使用 cargo 版 tauri CLI（cargo install tauri-cli --version 1.8.3 --locked）。
+//
 // 注意：本机编译产物依赖本机 glibc（开发机为 2.38），
 // 无法安装到 UOS20（Debian 10 底层，glibc 2.28）；
 // 交付给 UOS20 的 deb / AppImage 请使用 GitHub Actions 流水线产出。
@@ -108,6 +112,27 @@ function resolvePnpm() {
   return null
 }
 
+/**
+ * tauri CLI 解析：优先 cargo 版（与 tauri crate 版本一致），
+ * 回退到 npm 版 pnpm tauri（版本不匹配时会被 CLI 拒绝）。
+ */
+function resolveTauriCli() {
+  const cargoCli = spawnSync('cargo', ['tauri', '--version'], { encoding: 'utf8', env })
+  if (cargoCli.status === 0) {
+    const version = (cargoCli.stdout || '').trim().split('\n')[0]
+    return { cmd: 'cargo', args: ['tauri'], version, source: 'cargo' }
+  }
+  const pnpm = resolvePnpm()
+  if (pnpm) {
+    const npmCli = spawnSync(pnpm.cmd, [...pnpm.args, 'tauri', '--version'], { encoding: 'utf8', env })
+    if (npmCli.status === 0) {
+      const version = (npmCli.stdout || '').trim().split('\n')[0]
+      return { cmd: pnpm.cmd, args: [...pnpm.args, 'tauri'], version, source: 'npm' }
+    }
+  }
+  return null
+}
+
 function run(cmd, args, options = {}) {
   const res = spawnSync(cmd, args, { cwd: root, stdio: 'inherit', env, ...options })
   if (res.error) {
@@ -134,6 +159,17 @@ function pnpmRun(args) {
   return run(pnpm.cmd, [...pnpm.args, ...args])
 }
 
+function tauriRun(args) {
+  const cli = resolveTauriCli()
+  if (!cli) {
+    console.error('未找到 tauri CLI。请执行其一：')
+    console.error('  cargo install tauri-cli --version 1.8.3 --locked   # 与 Cargo.lock 中的 tauri crate 版本一致（推荐）')
+    console.error('  npm i -g @tauri-apps/cli@1.6.3                  # 与 tauri crate 1.8.3 不匹配，可能被拒绝')
+    process.exit(1)
+  }
+  return run(cli.cmd, [...cli.args, ...args])
+}
+
 function probe(label, cmd, args) {
   const res = spawnSync(cmd, args, { encoding: 'utf8', env })
   if (res.status !== 0) {
@@ -152,6 +188,8 @@ function showEnv() {
   console.log(`pnpm：${pnpm ? `${pnpm.cmd} ${pnpm.args.join(' ')}`.trim() : '未检测到（可用 corepack enable pnpm）'}`)
   probe('cargo', 'cargo', ['--version'])
   probe('rustc', 'rustc', ['--version'])
+  const cli = resolveTauriCli()
+  console.log(`tauri CLI：${cli ? `${cli.version}（${cli.source}）` : '未检测到（建议 cargo install tauri-cli --version 1.8.3 --locked）'}`)
   probe('glibc', 'ldd', ['--version'])
   probe('webkit2gtk-4.0', 'pkg-config', ['--modversion', 'webkit2gtk-4.0'])
   console.log('')
@@ -178,11 +216,11 @@ switch (command) {
     process.exit(pnpmRun(['install', ...rest]))
     break
   case 'dev':
-    process.exit(pnpmRun(['tauri', 'dev', ...rest]))
+    process.exit(tauriRun(['dev', ...rest]))
     break
   case 'build':
     console.warn('注意：本机产物不能交付 UOS20（glibc 不匹配），仅用于本机运行与调试。')
-    process.exit(pnpmRun(['tauri', 'build', ...rest]))
+    process.exit(tauriRun(['build', ...rest]))
     break
   case 'test':
     process.exit(run(process.execPath, [join(root, 'scripts', 'run-tests.mjs'), ...rest]))
