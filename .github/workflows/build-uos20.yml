@@ -86,7 +86,9 @@ jobs:
           set -eux
           # npm 上 @tauri-apps/cli 的 1.x 只发布到 1.6.3，
           # 与 Cargo.lock 中的 tauri 1.8.3 不匹配会被 CLI 拒绝，故使用 cargo 版 1.8.3
-          cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked
+          # --locked 在依赖版本已变更/yanked 时会直接失败，故失败时回退到重新解析
+          cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked 2>&1 | tee /tmp/tauri-cli-install.log \
+            || cargo install tauri-cli --version "${TAURI_CLI_VERSION}" 2>&1 | tee /tmp/tauri-cli-install.log
           cargo tauri --version
 
       - name: 缓存 Cargo 依赖
@@ -155,10 +157,17 @@ jobs:
             echo "- rustc: $(rustc --version 2>&1)"
             echo "- node: $(node -v 2>&1)"
             echo ""
+            echo '#### tauri CLI 安装'
+            echo '```'
+            tail -40 /tmp/tauri-cli-install.log 2>&1
+            echo '```'
+            echo ""
+            echo '#### 构建日志'
             echo '```'
             tail -60 /tmp/tauri-build.log 2>&1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          tail -40 /tmp/tauri-cli-install.log 2>&1 || true
           tail -60 /tmp/tauri-build.log 2>&1 || true
 
       - name: 上传构建产物
