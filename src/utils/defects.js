@@ -7,4 +7,6 @@ export const DEFECT_LEVELS = [
 ]
 
 export const levelInfo = (level) =>
-  DEFECT_LEVELS[level] || DEFECT_LEVELS[0]
+  Number.isInteger(level) && level >= 0 && level < DEFECT_LEVELS.length
+    ? DEFECT_LEVELS[level]
+    : DEFECT_LEVELS[0]

@@ -126,16 +126,24 @@ mod tests {
             note: "建议停电处理".into(),
             created_at: "2026-10-25".into(),
         };
-        let path = std::env::temp_dir().join("ir_test_report.docx");
+        let path = std::env::temp_dir().join(format!(
+            "ir_test_report_{}_{}.docx",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
         export_report(&[rec], &path, "张三", "2026-10-25", "配电运维班").unwrap();
         let meta = std::fs::metadata(&path).unwrap();
         assert!(meta.len() > 1000);
-        let _ = std::fs::remove_file(&path);
+        assert_eq!(&std::fs::read(&path).unwrap()[..2], b"PK");
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]
     fn empty_records_rejected() {
-        let path = std::env::temp_dir().join("ir_test_empty.docx");
+        let path = std::env::temp_dir().join(format!("ir_test_empty_{}.docx", std::process::id()));
         assert!(export_report(&[], &path, "x", "x", "x").is_err());
     }
 }

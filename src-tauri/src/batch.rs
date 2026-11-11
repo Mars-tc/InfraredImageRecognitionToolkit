@@ -117,9 +117,26 @@ pub fn parse_one(path: &Path, thresholds: &Thresholds) -> BatchItem {
 mod tests {
     use super::*;
 
+    /// 每轮独占的临时目录：cargo test 默认并行，并发跑两次或上次残留
+    /// 都不能让固定目录名污染断言。
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ir_test_{}_{}_{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("创建测试目录");
+        dir
+    }
+
     #[test]
     fn scan_finds_jpg_only() {
-        let dir = std::env::temp_dir().join("ir_test_batch");
+        let dir = scratch("batch_scan");
         let sub = dir.join("sub");
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(dir.join("a.jpg"), b"x").unwrap();
@@ -135,8 +152,7 @@ mod tests {
 
     #[test]
     fn parse_one_reports_error_for_non_rad() {
-        let dir = std::env::temp_dir().join("ir_test_batch2");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch("batch_parse");
         let p = dir.join("fake.jpg");
         std::fs::write(&p, b"not a jpeg").unwrap();
         let item = parse_one(&p, &Thresholds::default());

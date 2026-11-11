@@ -68,6 +68,21 @@ pub fn save(path: &Path, t: &Thresholds) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ir_test_{}_{}_{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("创建测试目录");
+        dir
+    }
+
     #[test]
     fn defaults_are_sane() {
         let t = Thresholds::default();
@@ -78,24 +93,39 @@ mod tests {
 
     #[test]
     fn save_and_load_roundtrip() {
-        let dir = std::env::temp_dir().join("ir_test_settings");
+        let dir = scratch("settings_roundtrip");
         let path = dir.join("thresholds.json");
-        let _ = std::fs::remove_file(&path);
         let mut t = Thresholds::default();
         t.joint_temp = 65.5;
         save(&path, &t).expect("save");
         let loaded = load(&path);
         assert_eq!(loaded.joint_temp, 65.5);
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn load_corrupt_falls_back_to_default() {
-        let dir = std::env::temp_dir().join("ir_test_settings");
+        let dir = scratch("settings_corrupt");
         let path = dir.join("bad.json");
         std::fs::write(&path, "{not json").unwrap();
         let loaded = load(&path);
         assert_eq!(loaded.joint_temp, 70.0);
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_clamps_out_of_range_values() {
+        let dir = scratch("settings_clamp");
+        let path = dir.join("thresholds.json");
+        std::fs::write(
+            &path,
+            r#"{"joint_temp":9999,"delta_t":-1,"phase_delta_t":700}"#,
+        )
+        .unwrap();
+        let loaded = load(&path);
+        assert_eq!(loaded.joint_temp, 500.0);
+        assert_eq!(loaded.delta_t, 0.0);
+        assert_eq!(loaded.phase_delta_t, 200.0);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

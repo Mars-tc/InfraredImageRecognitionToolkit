@@ -1,0 +1,21 @@
+[package]
+name = "ir-backend-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# 独立的后端测试目标：刻意不依赖 tauri / tauri-build。
+# 主 crate 的任意 cargo target 都会拉取 tauri → webkit2gtk-4.0 开发库，
+# 而内网/精简开发机常常只装了运行时库；本 crate 通过 #[path] 直接复用
+# src-tauri/src 下的源码模块与其内置 #[cfg(test)] 用例，让单元测试在任何环境可跑。
+# 依赖版本与主 crate 保持一致，全部来自本地 cargo 缓存，可完全离线构建。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 与主 crate 同样精确锁定：thermal 0.3.1 → indicatif 0.16.2 对 console 范围过松
+console = "=0.15.11"
+thermal = "0.3.1"
+rusqlite = { version = "0.40", features = ["bundled"] }
+kamadak-exif = "0.6.1"
+image = "0.25"
+docx-rs = "0.4"

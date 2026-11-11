@@ -53,7 +53,11 @@ function sample(stops, t) {
     }
   }
   const last = stops[stops.length - 1]
-  return [last[1] * 255, last[2] * 255, last[3] * 255]
+  return [
+    Math.round(last[1] * 255),
+    Math.round(last[2] * 255),
+    Math.round(last[3] * 255)
+  ]
 }
 
 /** 生成 256 级 LUT：Uint8ClampedArray(256*4)，RGBA 顺序 */

@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(query(&conn, "", Some(3), 10, 0).unwrap().len(), 0);
         // 更新
         let mut input = sample();
-        input.note = "已处理";
+        input.note = "已处理".to_string();
         update(&conn, id, &input).unwrap();
         assert_eq!(query(&conn, "已处理", None, 10, 0).unwrap().len(), 1);
         // 删除
@@ -273,13 +273,13 @@ mod tests {
     }
 
     #[test]
-    fn count_by_level() {
+    fn count_by_level_stats() {
         let conn = mem_db();
         insert(&conn, &sample()).unwrap();
         let mut s2 = sample();
         s2.level = 3;
         insert(&conn, &s2).unwrap();
-        let counts = count_by_level(&conn).unwrap();
+        let counts = super::count_by_level(&conn).unwrap();
         assert_eq!(counts[2], 1);
         assert_eq!(counts[3], 1);
     }

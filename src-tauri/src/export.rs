@@ -24,9 +24,9 @@ pub fn iron_color(t: f32) -> [u8; 3] {
         if t <= t1 {
             let k = if t1 > t0 { (t - t0) / (t1 - t0) } else { 0.0 };
             return [
-                (c0[0] as f32 + (c1[0] - c0[0]) as f32 * k) as u8,
-                (c0[1] as f32 + (c1[1] - c0[1]) as f32 * k) as u8,
-                (c0[2] as f32 + (c1[2] - c0[2]) as f32 * k) as u8,
+                (c0[0] as f32 + (c1[0] as f32 - c0[0] as f32) * k) as u8,
+                (c0[1] as f32 + (c1[1] as f32 - c0[1] as f32) * k) as u8,
+                (c0[2] as f32 + (c1[2] as f32 - c0[2] as f32) * k) as u8,
             ];
         }
     }
@@ -190,21 +190,38 @@ mod tests {
         assert!(c[0] > 200);
     }
 
+    /// 每轮独占的临时文件：唯一后缀必须放在扩展名之前，
+    /// 否则 image crate 无法按扩展名推断 PNG 格式。
+    fn scratch(ext: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "ir_test_export_{}_{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            ext
+        ))
+    }
+
     #[test]
     fn csv_export_and_count() {
         let temps: Vec<f32> = (0..9).map(|i| i as f32).collect();
-        let path = std::env::temp_dir().join("ir_test_export.csv");
+        let path = scratch("csv");
         let n = export_csv(&temps, 3, 3, &path).unwrap();
         assert_eq!(n, 9);
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("0.00,1.00,2.00"));
-        let _ = std::fs::remove_file(&path);
+        assert_eq!(&std::fs::read(&path).unwrap()[..3], b"\xEF\xBB\xBF");
+        // 尺寸不匹配必须明确报错，避免写出半截矩阵
+        assert!(export_csv(&temps, 4, 3, &path).is_err());
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]
     fn png_export_with_roi() {
         let temps: Vec<f32> = (0..640 * 64).map(|i| (i % 640) as f32).collect();
-        let path = std::env::temp_dir().join("ir_test_export.png");
+        let path = scratch("png");
         let rois = vec![RoiOverlay {
             x: 10.0,
             y: 10.0,

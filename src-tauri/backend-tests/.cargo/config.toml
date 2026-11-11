@@ -1,0 +1,9 @@
+# 复用主 crate 的编译缓存（同一套依赖版本），并保持完全离线。
+[build]
+target-dir = "../target"
+
+# 真实辐射样本路径：相对路径以本 .cargo 目录的父目录（backend-tests/）为基准。
+# 环境变量优先于源码内的编译期回退路径，保证样本解析用例不会「静默跳过」。
+[env]
+IR_SAMPLE_JPG = { value = "../../DJI_20260804234634_0002_T.JPG", relative = true }
+IR_SAMPLE_DJI = { value = "../../scripts/samples/DJI_0001_R.jpg", relative = true }

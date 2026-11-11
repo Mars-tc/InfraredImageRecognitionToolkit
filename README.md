@@ -104,9 +104,44 @@ node scripts/e2e-cdp.mjs                    # 终端 2（headless Chrome + mock 
 └── e2e/sample.json         # dump_temps 导出的真实样本温度矩阵
 ```
 
+## 测试与验收
+
+一条命令跑通全部自动化验收（零新增依赖，不改动离线打包配置）：
+
+```bash
+pnpm test                 # 全部通道
+pnpm test:rust            # Rust 单测 + 真实样本全链路
+pnpm test:frontend        # 前端纯逻辑
+pnpm test:sample          # 样本基线
+pnpm test:e2e             # E2E 现状核查
+```
+
+| 通道 | 实际命令 | 覆盖 |
+| --- | --- | --- |
+| Rust | `cargo test --offline`（`src-tauri/backend-tests`） | 32 项：R-JPEG 解析 / 测温 / ROI / 定级 / 台账 / 导出 / 批量 / 阈值，含两张真实辐射原图 |
+| 前端 | `node --test tests/*.test.js` | 20 项：调色板 LUT、缺陷等级、格式化、19 个 IPC 命令契约、5 个 pinia store |
+| 样本基线 | `node scripts/verify-sample.mjs` | `e2e/sample.json` 的 15 字段、640×512 矩阵、ε / 距离 / 温度量程 |
+| E2E | `node scripts/check-e2e.mjs` | 静态核对 19 个注册命令 / 19 个前端封装 / 9 个 mock 分支 |
+
+### 为什么后端测试放在 `src-tauri/backend-tests/`
+
+主 crate 的任意 cargo target 都会链接 tauri → `webkit2gtk-4.0` / `gtk-3` / `glib-2.0` 开发库；精简开发机与内网 CI 通常只有运行时库（例如本机仅有 4.1），`gdk-sys` / `gio-sys` 的 build script 会直接失败。独立 crate 沿用 `bin/dump_temps.rs` 的 `#[path]` 做法，复用**同一份**源码模块与内置 `#[cfg(test)]` 用例，不链接 tauri，因此完全离线、无 GTK 依赖。开发环境若已装齐 GTK 4.0 开发库，仍可额外执行 `cd src-tauri && cargo test --lib` 验证完整 lib 目标。
+
+### 工具链与样本
+
+- 入口脚本自动把 `~/.cargo/bin` 加入 PATH；Node < 18 时自动从 NVM 目录（`NVM_DIR`，默认 `~/.config/nvm`）挑选最高版本自举。
+- 真实样本经 `IR_SAMPLE_JPG` / `IR_SAMPLE_DJI` 注入（也写在 `backend-tests/.cargo/config.toml`）；样本缺失时测试**直接失败**，不静默跳过。
+- 测试临时目录均带进程号与时间戳，支持 `cargo test` 并行与重复执行。
+
+### 验收记录（2026-11-04）
+
+- Rust 32/32、前端 20/20、样本基线、E2E 静态核查全部通过。
+- 真实样本 `DJI_20260804234634_0002_T.JPG`：640×512、ε=0.95、距离 5 m、28.96~32.70 ℃；CSV / 标注 PNG / Word 报告产物均可生成并解码。
+- `scripts/e2e-cdp.mjs` 因本机无 Chrome/Chromium 且默认路径为 Windows，CDP 图形验收记为**环境受限项**；在有浏览器的机器设置 `CHROME_PATH` 并先启动 `pnpm dev` 后可复现。
+
 ## 已知事项
 
 - Windows-GNU 下 `cargo test` 的测试二进制存在 WebView2Loader 符号解析问题
-  （应用本体与 Linux 目标不受影响）；单元测试在 Linux/CI 上运行。
+  （应用本体与 Linux 目标不受影响）；单元测试在 Linux/CI 上运行，现统一走无 GTK 依赖的 `backend-tests`。
 - headless 验收脚本中 Vue 异步 flush 存在延迟，脚本已用强制刷新兜底。
 - 批量解析为顺序执行（100 张内无感），后续可换 rayon 并行。

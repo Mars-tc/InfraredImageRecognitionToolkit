@@ -407,9 +407,9 @@ mod tests {
 
     #[test]
     fn parse_m3t_sample() {
+        // 样本缺失必须失败，不能静默跳过造成「零断言假绿」
         let Some(path) = sample_path("IR_SAMPLE_JPG", "DJI_20260804234634_0002_T.JPG") else {
-            eprintln!("skip: 未找到御3T样本（设置 IR_SAMPLE_JPG 可指定）");
-            return;
+            panic!("未找到御3T样本（设置 IR_SAMPLE_JPG 指向真实辐射原图）");
         };
         let img = load_rad_image(path.to_str().expect("path utf8"), None).expect("解析样本失败");
         assert_eq!(img.meta.source_kind, "dji");
@@ -432,8 +432,7 @@ mod tests {
     #[test]
     fn parse_dji_official_sample() {
         let Some(path) = sample_path("IR_SAMPLE_DJI", "scripts/samples/DJI_0001_R.jpg") else {
-            eprintln!("skip: 未找到 DJI 官方样本");
-            return;
+            panic!("未找到 DJI 官方样本（设置 IR_SAMPLE_DJI 指向真实辐射原图）");
         };
         let img = load_rad_image(path.to_str().expect("path utf8"), None).expect("解析样本失败");
         assert_eq!(img.meta.source_kind, "dji");

@@ -8,7 +8,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node scripts/run-tests.mjs",
+    "test:rust": "node scripts/run-tests.mjs --rust",
+    "test:frontend": "node scripts/run-tests.mjs --frontend",
+    "test:sample": "node scripts/run-tests.mjs --sample",
+    "test:e2e": "node scripts/run-tests.mjs --e2e"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

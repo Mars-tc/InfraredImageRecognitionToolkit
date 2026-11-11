@@ -94,3 +94,60 @@ pub fn temp_range(temps: &[f32]) -> (f64, f64) {
 pub fn settings_f64(settings_json: &serde_json::Value, key: &str) -> Option<f64> {
     settings_json.get(key).and_then(|v| v.as_f64())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temp_range_filters_non_finite() {
+        let (min, max) = temp_range(&[]);
+        assert!(min.is_nan() && max.is_nan(), "空矩阵应返回 NaN");
+        let (min, max) = temp_range(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
+        assert!(min.is_nan() && max.is_nan(), "全非有限值应返回 NaN");
+        assert_eq!(
+            temp_range(&[1.0, 5.0, 3.0, f32::NAN, f32::INFINITY]),
+            (1.0, 5.0)
+        );
+    }
+
+    #[test]
+    fn num_to_str_never_uses_exponent() {
+        for v in [25.0, 0.95, 1e-9, 1e20, -12.5, 0.0] {
+            let s = num_to_str_pub(v);
+            assert!(!s.contains('e') && !s.contains('E'), "{v} -> {s}");
+            assert!(s.parse::<f64>().is_ok(), "{s} 应可解析回数值");
+        }
+        assert_eq!(num_to_str_pub(0.95), "0.95");
+    }
+
+    #[test]
+    fn settings_f64_reads_numbers_only() {
+        let v = serde_json::json!({ "Emissivity": 0.95, "Label": "x" });
+        assert_eq!(settings_f64(&v, "Emissivity"), Some(0.95));
+        assert_eq!(settings_f64(&v, "Label"), None);
+        assert_eq!(settings_f64(&v, "Missing"), None);
+    }
+
+    #[test]
+    fn with_emissivity_validates_range_and_writes_field() {
+        let s = crate::dji::build_settings(&crate::dji::DjiParams::default())
+            .expect("构造标定参数");
+        assert!(with_emissivity(&s, 0.049).is_err(), "0.05 为下界");
+        assert!(with_emissivity(&s, 1.01).is_err(), "1.0 为上界");
+        for e in [0.05, 0.5, 1.0] {
+            let changed = with_emissivity(&s, e).expect("边界内发射率应合法");
+            let json = serde_json::to_value(&changed).expect("序列化标定参数");
+            assert!((settings_f64(&json, "Emissivity").unwrap() - e).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn compute_temps_produces_finite_matrix() {
+        let s = crate::dji::build_settings(&crate::dji::DjiParams::default())
+            .expect("构造标定参数");
+        let temps = compute_temps(&[19388.0; 16], &s, DEFAULT_DISTANCE);
+        assert_eq!(temps.len(), 16);
+        assert!(temps.iter().all(|t| t.is_finite()));
+    }
+}

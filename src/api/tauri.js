@@ -133,6 +133,9 @@ export function exportReport(ids, path, inspector, date, org) {
 export function base64ToFloat32(b64) {
   const bin = atob(b64)
   const len = bin.length
+  // f32 每点占 4 字节：长度不对齐时 Float32Array 会静默截断，
+  // 导致温度矩阵比图片尺寸短，必须显式报错而不是产出半截数据。
+  if (len % 4 !== 0) throw new Error(`温度矩阵字节数异常: ${len}（应为 4 的倍数）`)
   const bytes = new Uint8Array(len)
   for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
   return new Float32Array(bytes.buffer, 0, len / 4)

@@ -130,9 +130,10 @@ mod tests {
         assert_eq!(verdict(&stats(75.0, 70.0), &t).level, LEVEL_MINOR);
         assert_eq!(verdict(&stats(90.0, 70.0), &t).level, LEVEL_MAJOR);
         assert_eq!(verdict(&stats(110.0, 70.0), &t).level, LEVEL_CRITICAL);
-        // 温差路径
+        // 温差路径（默认阈值 ΔT=10：≥10 一般 / ≥20 重大 / ≥30 紧急）
         assert_eq!(verdict(&stats(50.0, 35.0), &t).level, LEVEL_MINOR);
-        assert_eq!(verdict(&stats(50.0, 20.0), &t).level, LEVEL_MAJOR);
+        assert_eq!(verdict(&stats(50.0, 30.0), &t).level, LEVEL_MAJOR);
+        assert_eq!(verdict(&stats(50.0, 20.0), &t).level, LEVEL_CRITICAL);
         assert_eq!(verdict(&stats(50.0, 10.0), &t).level, LEVEL_CRITICAL);
     }
 
@@ -162,5 +163,42 @@ mod tests {
             &t,
         )
         .is_none());
+    }
+
+    #[test]
+    fn thresholds_are_inclusive_and_configurable() {
+        let t = Thresholds::default();
+        // 温差路径：阈值边界取等号即触发，略低于阈值不触发
+        assert_eq!(verdict(&stats(50.0, 40.1), &t).level, LEVEL_OTHER);
+        assert_eq!(verdict(&stats(50.0, 40.0), &t).level, LEVEL_MINOR);
+        // 温度路径与温差解耦（max 单独决定档位）
+        assert_eq!(verdict(&stats(69.9, 65.0), &t).level, LEVEL_OTHER);
+        assert_eq!(verdict(&stats(70.0, 65.0), &t).level, LEVEL_MINOR);
+        assert_eq!(verdict(&stats(85.0, 80.0), &t).level, LEVEL_MAJOR);
+        assert_eq!(verdict(&stats(100.0, 95.0), &t).level, LEVEL_CRITICAL);
+
+        // 自定义阈值：倍数关系随配置变化
+        let custom = Thresholds {
+            joint_temp: 100.0,
+            delta_t: 20.0,
+            phase_delta_t: 5.0,
+        };
+        assert_eq!(verdict(&stats(90.0, 80.0), &custom).level, LEVEL_OTHER);
+        assert_eq!(verdict(&stats(100.0, 95.0), &custom).level, LEVEL_MINOR);
+        assert_eq!(verdict(&stats(90.0, 50.0), &custom).level, LEVEL_MAJOR);
+        assert_eq!(verdict(&stats(90.0, 30.0), &custom).level, LEVEL_CRITICAL);
+    }
+
+    #[test]
+    fn phase_compare_ignores_invalid_phases() {
+        let t = Thresholds::default();
+        assert!(phase_compare(&[("N".into(), 50.0), ("X".into(), 90.0)], &t).is_none());
+        let v = phase_compare(
+            &[("A".into(), 50.0), ("A".into(), 90.0), ("B".into(), 51.0)],
+            &t,
+        )
+        .expect("同相取最大值后仍应比对");
+        // 相间告警最高只到「重大」（2 倍阈值即封顶），同相重复值取最大
+        assert_eq!(v.level, LEVEL_MAJOR);
     }
 }

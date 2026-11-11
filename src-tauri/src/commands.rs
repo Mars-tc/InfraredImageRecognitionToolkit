@@ -83,7 +83,7 @@ pub fn get_temps(state: State<'_, AppState>) -> AppResult<String> {
     for t in &img.temps {
         bytes.extend_from_slice(&t.to_le_bytes());
     }
-    Ok(to_base64(&bytes))
+    Ok(crate::utils::to_base64(&bytes))
 }
 
 /// 当前图片尺寸（前端分配 Float32Array 用）
@@ -339,43 +339,4 @@ pub fn export_report(
     let records = state.with_db(|conn| db::get_by_ids(conn, &ids))?;
     crate::report::export_report(&records, std::path::Path::new(&path), &inspector, &date, &org)?;
     Ok(path)
-}
-
-/// 标准 base64 编码（无第三方依赖）
-fn to_base64(data: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(TABLE[(n >> 18) as usize & 63] as char);
-        out.push(TABLE[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 {
-            TABLE[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            TABLE[n as usize & 63] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn base64_encoding() {
-        assert_eq!(to_base64(b""), "");
-        assert_eq!(to_base64(b"f"), "Zg==");
-        assert_eq!(to_base64(b"fo"), "Zm8=");
-        assert_eq!(to_base64(b"foo"), "Zm9v");
-        assert_eq!(to_base64(b"foobar"), "Zm9vYmFy");
-    }
 }

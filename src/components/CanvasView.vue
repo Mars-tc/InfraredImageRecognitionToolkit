@@ -476,12 +476,14 @@ defineExpose({ fitToView, getFabric: () => fabric, iid })
   top: 0;
   bottom: 0;
   width: 1px;
+  z-index: 3;
 }
 
 .crosshair-h {
   left: 0;
   right: 0;
   height: 1px;
+  z-index: 3;
 }
 
 .cursor-tip {
@@ -494,6 +496,7 @@ defineExpose({ fitToView, getFabric: () => fabric, iid })
   font-variant-numeric: tabular-nums;
   pointer-events: none;
   white-space: nowrap;
+  z-index: 4;
 }
 
 .canvas-tools {
@@ -503,6 +506,7 @@ defineExpose({ fitToView, getFabric: () => fabric, iid })
   display: flex;
   align-items: center;
   gap: 8px;
+  z-index: 5;
 }
 
 .draw-hint {
@@ -526,6 +530,7 @@ defineExpose({ fitToView, getFabric: () => fabric, iid })
   color: #dfe6ee;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  z-index: 5;
 }
 
 .zoom-badge :deep(.el-button) {
