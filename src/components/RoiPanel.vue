@@ -84,12 +84,15 @@ function removeRoi(id) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
 }
 
 .roi-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 .roi-title {
@@ -109,11 +112,13 @@ function removeRoi(id) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 300px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
 .roi-item {
+  flex-shrink: 0;
   padding: 8px 10px;
   border: 1px solid var(--ip-border);
   border-radius: 6px;
@@ -219,6 +224,7 @@ function removeRoi(id) {
 .phase-alert {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 6px;
   padding: 6px 10px;
   border: 1px solid var(--ip-warning);

@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::diagnosis;
 use crate::error::AppResult;
 use crate::settings::Thresholds;
-use crate::thermal::load_rad_image;
+use crate::thermal::{load_rad_image, read_position};
 
 /// 批量结果条目
 #[derive(Debug, Serialize, Clone)]
@@ -22,6 +22,10 @@ pub struct BatchItem {
     /// 缺陷等级 0~3
     pub level: u8,
     pub error: Option<String>,
+    /// 拍摄位置（离线地图打点用；无 GPS 或坐标无效时为 null）
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub datetime: Option<String>,
 }
 
 /// 批量汇总
@@ -62,6 +66,8 @@ pub fn scan_folder(dir: &Path, recursive: bool) -> AppResult<Vec<PathBuf>> {
 
 /// 解析单张并按阈值定级（失败时返回带 error 的条目）
 pub fn parse_one(path: &Path, thresholds: &Thresholds) -> BatchItem {
+    // 定位信息独立于温度解析：普通预览图 / 损坏文件解析失败时仍可打点
+    let pos = read_position(path);
     let item = BatchItem {
         path: path.to_string_lossy().to_string(),
         file_name: path
@@ -73,6 +79,9 @@ pub fn parse_one(path: &Path, thresholds: &Thresholds) -> BatchItem {
         delta_t: 0.0,
         level: 0,
         error: None,
+        lat: pos.as_ref().map(|p| p.lat),
+        lon: pos.as_ref().map(|p| p.lon),
+        datetime: pos.and_then(|p| p.datetime),
     };
     match load_rad_image(&path.to_string_lossy(), None) {
         Ok(img) => {
@@ -157,6 +166,37 @@ mod tests {
         std::fs::write(&p, b"not a jpeg").unwrap();
         let item = parse_one(&p, &Thresholds::default());
         assert!(item.error.is_some());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parse_one_keeps_gps_when_temperature_parse_fails() {
+        let dir = scratch("batch_gps");
+        let p = dir.join("xmp_only.jpg");
+        let mut bytes = b"\xff\xd8not-a-rjpeg".to_vec();
+        bytes.extend_from_slice(
+            br#"<x:xmpmeta drone-dji:GpsLatitude="+31.25" drone-dji:GpsLongitude="+121.5" xmp:CreateDate="2026-08-04T23:46:34">"#,
+        );
+        std::fs::write(&p, &bytes).unwrap();
+
+        let item = parse_one(&p, &Thresholds::default());
+        assert!(item.error.is_some(), "非辐射图应标记为解析失败");
+        assert_eq!(item.lat, Some(31.25));
+        assert_eq!(item.lon, Some(121.5));
+        assert_eq!(item.datetime.as_deref(), Some("2026-08-04T23:46:34"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parse_one_without_gps_leaves_null_coords() {
+        let dir = scratch("batch_no_gps");
+        let p = dir.join("fake.jpg");
+        std::fs::write(&p, b"not a jpeg").unwrap();
+        let item = parse_one(&p, &Thresholds::default());
+        assert!(item.error.is_some());
+        assert_eq!(item.lat, None);
+        assert_eq!(item.lon, None);
+        assert_eq!(item.datetime, None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -44,6 +44,8 @@ pub mod db;
 pub mod report;
 #[path = "../../src/batch.rs"]
 pub mod batch;
+#[path = "../../src/thumbnail.rs"]
+pub mod thumbnail;
 
 #[cfg(test)]
 mod pipeline_tests {

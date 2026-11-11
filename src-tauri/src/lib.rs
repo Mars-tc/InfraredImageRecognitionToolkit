@@ -22,5 +22,6 @@ pub mod report;
 pub mod roi;
 pub mod settings;
 pub mod thermal;
+pub mod thumbnail;
 pub mod temperature;
 pub mod utils;

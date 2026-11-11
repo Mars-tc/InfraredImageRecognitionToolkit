@@ -189,3 +189,115 @@ test('台账 store：查询、筛选与增删改', async () => {
   assert.equal(store.keyword, 'T1')
   assert.equal(store.levelFilter, 2)
 })
+
+test('图片 store：全图极值缓存、标注开关与发射率修正后重取', async () => {
+  const meta = { width: 2, height: 2, temp_min: 10, temp_max: 13 }
+  const bytes = new Uint8Array(new Float32Array([10, 11, 12, 13]).buffer)
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  const b64 = btoa(bin)
+  const ex = { max: 13, min: 10, max_pos: [1, 1], min_pos: [0, 0] }
+  let extremaCalls = 0
+  mock.setHandler((msg) => {
+    if (msg.cmd === 'load_image') return meta
+    if (msg.cmd === 'get_temps') return b64
+    if (msg.cmd === 'image_extrema') {
+      extremaCalls++
+      return ex
+    }
+    if (msg.cmd === 'set_emissivity') return { ...meta, emissivity: msg.value }
+    return null
+  })
+
+  const store = useImageStore()
+  assert.equal(store.showTempMarks, true, '标注总开关默认开启')
+  await store.load('/tmp/a.jpg')
+  assert.deepEqual({ ...store.extrema }, ex)
+  assert.equal(extremaCalls, 1)
+
+  store.toggleTempMarks()
+  assert.equal(store.showTempMarks, false)
+  store.toggleTempMarks()
+  assert.equal(store.showTempMarks, true)
+
+  await store.changeEmissivity(0.9)
+  assert.equal(extremaCalls, 2, '温度矩阵重算后应重新取极值')
+
+  store.reset()
+  assert.equal(store.extrema, null)
+})
+
+test('图片 store：极值读取失败静默降级，不阻断图片加载', async () => {
+  const meta = { width: 2, height: 2, temp_min: 10, temp_max: 13 }
+  const bytes = new Uint8Array(new Float32Array([10, 11, 12, 13]).buffer)
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  const b64 = btoa(bin)
+  mock.setHandler((msg) => {
+    if (msg.cmd === 'load_image') return meta
+    if (msg.cmd === 'get_temps') return b64
+    if (msg.cmd === 'image_extrema') throw '极值接口不可用'
+    return null
+  })
+
+  const originalError = console.error
+  console.error = () => {}
+  try {
+    const store = useImageStore()
+    await store.load('/tmp/a.jpg')
+    assert.equal(store.hasImage, true)
+    assert.equal(store.error, '')
+    assert.equal(store.extrema, null)
+  } finally {
+    console.error = originalError
+  }
+})
+
+test('ROI：统计回填极值坐标，旧响应保持兼容', async () => {
+  mock.setHandler((msg) => {
+    if (msg.cmd === 'roi_stats') {
+      return {
+        max: 75, min: 70, avg: 72.5, delta_t: 5, count: 10,
+        extrema: { max: 75, min: 70, max_pos: [4, 5], min_pos: [1, 2] },
+        verdict: null
+      }
+    }
+    return null
+  })
+  const store = useRoiStore()
+  const roi = store.addRoi('rect', { kind: 'rect' })
+  await flush()
+  assert.deepEqual(roi.stats.max_pos, [4, 5])
+  assert.deepEqual(roi.stats.min_pos, [1, 2])
+  assert.equal(roi.stats.max, 75)
+
+  // 没有 extrema 字段的旧响应不应附加坐标字段
+  mock.setHandler(() => ({
+    max: 1, min: 0, avg: 0.5, delta_t: 1, count: 1, verdict: null
+  }))
+  store.updateShape(roi.id, { kind: 'rect', x: 5 })
+  await flush()
+  assert.equal(roi.stats.max_pos, undefined)
+})
+
+test('视图 store：openInAnalysis 加载原图并切回分析页', async () => {
+  const meta = { width: 2, height: 2, temp_min: 10, temp_max: 13 }
+  const bytes = new Uint8Array(new Float32Array([10, 11, 12, 13]).buffer)
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  const b64 = btoa(bin)
+  mock.setHandler((msg) => {
+    if (msg.cmd === 'load_image') return meta
+    if (msg.cmd === 'get_temps') return b64
+    if (msg.cmd === 'image_extrema') return { max: 13, min: 10, max_pos: [1, 1], min_pos: [0, 0] }
+    return null
+  })
+  const { useViewStore } = await import('../src/stores/view.js')
+  const view = useViewStore()
+  assert.equal(view.activeView, 'analysis')
+  view.activeView = 'batch'
+  await view.openInAnalysis('/tmp/map.jpg')
+  assert.equal(view.activeView, 'analysis')
+  assert.ok(mock.calls.some((c) => c.cmd === 'load_image' && c.path === '/tmp/map.jpg'))
+  assert.equal(useImageStore().hasImage, true)
+})

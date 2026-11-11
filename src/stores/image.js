@@ -20,6 +20,8 @@ export const useImageStore = defineStore('image', () => {
   const loading = ref(false)
   const error = ref('')
   const hover = ref(null) // { x, y, temp }
+  const extrema = ref(null) // 全图极值 { max, min, max_pos, min_pos }
+  const showTempMarks = ref(true) // 画布温度标注总开关（会话内有效，不落盘）
 
   const lut = computed(() => buildLut(palette.value))
 
@@ -40,6 +42,20 @@ export const useImageStore = defineStore('image', () => {
     return temps.value[iy * width.value + ix]
   }
 
+  // 全图极值由后端一次扫描产出并缓存；失败时静默降级为「无全图标注」
+  async function refreshExtrema() {
+    try {
+      extrema.value = await api.imageExtrema()
+    } catch (e) {
+      extrema.value = null
+      console.error('读取全图极值失败', e)
+    }
+  }
+
+  function toggleTempMarks() {
+    showTempMarks.value = !showTempMarks.value
+  }
+
   async function load(path, distance = null) {
     loading.value = true
     error.value = ''
@@ -50,6 +66,7 @@ export const useImageStore = defineStore('image', () => {
       height.value = m.height
       const t = await api.getTemps()
       temps.value = t
+      await refreshExtrema()
       // 新图片重置色标与视图
       scaleMin.value = null
       scaleMax.value = null
@@ -60,6 +77,7 @@ export const useImageStore = defineStore('image', () => {
       error.value = typeof e === 'string' ? e : e?.message || String(e)
       meta.value = null
       temps.value = null
+      extrema.value = null
     } finally {
       loading.value = false
     }
@@ -90,6 +108,7 @@ export const useImageStore = defineStore('image', () => {
     try {
       meta.value = await api.setEmissivity(value)
       temps.value = await api.getTemps()
+      await refreshExtrema()
     } catch (e) {
       error.value = typeof e === 'string' ? e : e?.message || String(e)
     }
@@ -99,6 +118,7 @@ export const useImageStore = defineStore('image', () => {
     try {
       meta.value = await api.setDistance(value)
       temps.value = await api.getTemps()
+      await refreshExtrema()
     } catch (e) {
       error.value = typeof e === 'string' ? e : e?.message || String(e)
     }
@@ -120,13 +140,15 @@ export const useImageStore = defineStore('image', () => {
     height.value = 0
     error.value = ''
     hover.value = null
+    extrema.value = null
   }
 
   return {
     meta, temps, width, height,
     palette, scaleMin, scaleMax, zoom, panX, panY,
-    loading, error, hover, lut, hasImage, effectiveMin, effectiveMax,
+    loading, error, hover, extrema, showTempMarks, lut, hasImage, effectiveMin, effectiveMax,
     tempAt, load, setPalette, setScale, autoScale,
-    changeEmissivity, changeDistance, setHover, clearHover, reset, autoLoadFromUrl
+    changeEmissivity, changeDistance, setHover, clearHover, reset, autoLoadFromUrl,
+    refreshExtrema, toggleTempMarks
   }
 })

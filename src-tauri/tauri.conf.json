@@ -23,6 +23,14 @@
         ]
       }
     },
+    "allowlist": {
+      "all": false,
+      "dialog": {
+        "all": false,
+        "open": true,
+        "save": true
+      }
+    },
     "security": {
       "csp": null
     },

@@ -5,8 +5,9 @@ import AnalysisView from './components/AnalysisView.vue'
 import BatchPanel from './components/BatchPanel.vue'
 import LedgerPanel from './components/LedgerPanel.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
+import { useViewStore } from './stores/view.js'
 
-const activeView = ref('analysis')
+const view = useViewStore()
 const settingsOpen = ref(false)
 
 const views = [
@@ -15,7 +16,7 @@ const views = [
   { key: 'ledger', label: '巡检台账', icon: 'Notebook' }
 ]
 
-const viewTitle = computed(() => views.find((v) => v.key === activeView.value)?.label ?? '')
+const viewTitle = computed(() => views.find((v) => v.key === view.activeView)?.label ?? '')
 </script>
 
 <template>
@@ -25,7 +26,7 @@ const viewTitle = computed(() => views.find((v) => v.key === activeView.value)?.
         <div class="brand-logo">IR</div>
         <div class="brand-text">
           <span class="brand-name">红外照片分析工具</span>
-          <span class="brand-sub">配网无人机红外巡检 · 离线版</span>
+          <span class="brand-sub">@Mars-GTC</span>
         </div>
       </div>
       <nav class="app-nav">
@@ -34,8 +35,8 @@ const viewTitle = computed(() => views.find((v) => v.key === activeView.value)?.
           :key="v.key"
           type="button"
           class="nav-btn"
-          :class="{ active: activeView === v.key }"
-          @click="activeView = v.key"
+          :class="{ active: view.activeView === v.key }"
+          @click="view.activeView = v.key"
         >
           <el-icon><component :is="v.icon" /></el-icon>
           <span>{{ v.label }}</span>
@@ -52,9 +53,9 @@ const viewTitle = computed(() => views.find((v) => v.key === activeView.value)?.
     <SettingsDialog v-model="settingsOpen" />
 
     <main class="app-main">
-      <AnalysisView v-show="activeView === 'analysis'" class="view-pane" />
-      <BatchPanel v-show="activeView === 'batch'" class="view-pane" />
-      <LedgerPanel v-show="activeView === 'ledger'" class="view-pane" />
+      <AnalysisView v-show="view.activeView === 'analysis'" class="view-pane" />
+      <BatchPanel v-show="view.activeView === 'batch'" class="view-pane" />
+      <LedgerPanel v-show="view.activeView === 'ledger'" class="view-pane" />
     </main>
 
     <footer class="app-status">

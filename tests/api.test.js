@@ -37,9 +37,19 @@ test('IPC 封装的命令名与参数映射（对照 main.rs）', async () => {
     [() => api.roiStats({ kind: 'rect' }), 'roi_stats', { shape: { kind: 'rect' } }],
     [() => api.phaseCompare([['A', 50]]), 'phase_compare', { entries: [['A', 50]] }],
     [() => api.batchParse('/tmp/dir'), 'batch_parse', { dir: '/tmp/dir', recursive: true }],
+    [() => api.getThumbnail('/tmp/a.jpg'), 'get_thumbnail', { path: '/tmp/a.jpg' }],
     [() => api.exportCsv('/tmp/a.csv'), 'export_csv', { path: '/tmp/a.csv' }],
     [() => api.exportBatchCsv([], '/tmp/b.csv'), 'export_batch_csv', { rows: [], path: '/tmp/b.csv' }],
-    [() => api.exportAnnotated('/tmp/a.png'), 'export_annotated', { path: '/tmp/a.png', rois: [] }],
+    [() => api.exportAnnotated('/tmp/a.png'), 'export_annotated', { path: '/tmp/a.png', rois: [], marks: [] }],
+    [
+      () => api.exportAnnotated('/tmp/b.png', [{ kind: 'rect' }], [{ x: 1, y: 2, label: 'IMG MAX 75.2C', color: [255, 64, 32] }]),
+      'export_annotated',
+      {
+        path: '/tmp/b.png',
+        rois: [{ kind: 'rect' }],
+        marks: [{ x: 1, y: 2, label: 'IMG MAX 75.2C', color: [255, 64, 32] }]
+      }
+    ],
     [() => api.ledgerAdd({ tower_no: 'T1' }), 'ledger_add', { input: { tower_no: 'T1' } }],
     [() => api.ledgerQuery(), 'ledger_query', { keyword: '', level: null, limit: 200, offset: 0 }],
     [() => api.ledgerUpdate(3, { tower_no: 'T2' }), 'ledger_update', { id: 3, input: { tower_no: 'T2' } }],
@@ -68,6 +78,7 @@ test('IPC 封装的命令名与参数映射（对照 main.rs）', async () => {
     [() => api.getTemps(), 'get_temps'],
     [() => api.getDimensions(), 'get_dimensions'],
     [() => api.getSettings(), 'get_settings'],
+    [() => api.imageExtrema(), 'image_extrema'],
     [() => api.ledgerStats(), 'ledger_stats']
   ]) {
     const before = mock.calls.length

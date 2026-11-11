@@ -72,15 +72,28 @@ export const useRoiStore = defineStore('roi', () => {
     }
   }
 
+  // 拖动 ROI 时会连续发起统计请求，用序号保证只回填最新一次的结果
+  const statsSeq = new Map()
+
   async function refreshStats(id) {
     const roi = rois.value.find((r) => r.id === id)
     if (!roi) return
+    const seq = (statsSeq.get(id) || 0) + 1
+    statsSeq.set(id, seq)
+    // 过期结果或 ROI 已被删除时直接丢弃，避免异步回调乱序覆盖面板
+    const isLatest = () => statsSeq.get(id) === seq && rois.value.some((r) => r.id === id)
     try {
       const r = await api.roiStats(roi.shape)
-      roi.stats = { max: r.max, min: r.min, avg: r.avg, delta_t: r.delta_t, count: r.count }
+      if (!isLatest()) return
+      const stats = { max: r.max, min: r.min, avg: r.avg, delta_t: r.delta_t, count: r.count }
+      // 后端随统计返回极值像素坐标；旧响应缺少该字段时不附加，保持兼容
+      if (r.extrema?.max_pos) stats.max_pos = r.extrema.max_pos
+      if (r.extrema?.min_pos) stats.min_pos = r.extrema.min_pos
+      roi.stats = stats
       roi.verdict = r.verdict || null
       roi.error = ''
     } catch (e) {
+      if (!isLatest()) return
       roi.stats = null
       roi.verdict = null
       roi.error = typeof e === 'string' ? e : e?.message || String(e)

@@ -25,10 +25,6 @@ const store = useImageStore()
 </template>
 
 <style scoped>
-.meta-card {
-  overflow-y: auto;
-}
-
 .panel-title {
   margin: 0 0 8px;
   font-size: 13px;

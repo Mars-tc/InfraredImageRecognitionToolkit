@@ -5,6 +5,7 @@ import { useImageStore } from '../stores/image.js'
 import { useRoiStore } from '../stores/roi.js'
 import { pickImage, pickSave, exportCsv, exportAnnotated } from '../api/tauri.js'
 import { fmtTemp } from '../utils/format.js'
+import { buildTempMarks } from '../utils/tempMarks.js'
 import CanvasView from './CanvasView.vue'
 import ColorScale from './ColorScale.vue'
 import RoiPanel from './RoiPanel.vue'
@@ -87,7 +88,15 @@ async function onExportPng() {
   const path = await pickSave(`${base}_标注图.png`, ['png'])
   if (!path) return
   try {
-    await exportAnnotated(path, roiStore.rois.map((r) => r.shape))
+    // 与画布所见一致：开关关闭时不带标注，导出侧用 ASCII 标签 + RGB 颜色
+    const marks = store.showTempMarks
+      ? buildTempMarks({
+          extrema: store.extrema,
+          rois: roiStore.rois,
+          selectedId: roiStore.selectedId
+        }).map((m) => ({ x: m.x, y: m.y, label: m.ascii, color: m.rgb }))
+      : []
+    await exportAnnotated(path, roiStore.rois.map((r) => r.shape), marks)
     ElMessage.success('标注图已导出')
   } catch (e) {
     ElMessage.error(typeof e === 'string' ? e : '导出失败')
@@ -128,13 +137,15 @@ async function onExportPng() {
         <CanvasView v-else class="canvas-mounted" />
       </div>
 
-      <aside class="side-panel">
-        <section class="panel-card">
-          <ColorScale />
-        </section>
-
-        <section class="panel-card">
+      <aside class="roi-column">
+        <section class="panel-card roi-card">
           <RoiPanel />
+        </section>
+      </aside>
+
+      <aside class="side-panel">
+        <section class="panel-card color-card">
+          <ColorScale />
         </section>
 
         <MetaPanel class="meta-holder" />
@@ -233,11 +244,22 @@ async function onExportPng() {
   color: #6b7a8d;
 }
 
+/* ROI 独立成列，整列高度都留给列表；右侧只放色标与元数据 */
+.roi-column {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 340px;
+  min-height: 0;
+}
+
 .side-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: none;
   width: 300px;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -247,6 +269,18 @@ async function onExportPng() {
   border: 1px solid var(--ip-border);
   border-radius: var(--ip-radius);
   box-shadow: var(--ip-shadow);
+}
+
+.color-card,
+.meta-holder {
+  flex: none;
+}
+
+.roi-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .status-bar {

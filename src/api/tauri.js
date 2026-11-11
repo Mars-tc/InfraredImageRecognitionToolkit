@@ -44,6 +44,11 @@ export function getDimensions() {
   return invoke('get_dimensions')
 }
 
+/** 离线地图点位弹窗：按路径生成红外原图缩略图 data URL（按需懒加载） */
+export function getThumbnail(path) {
+  return invoke('get_thumbnail', { path })
+}
+
 /** F7：修改发射率，返回新元数据 */
 export function setEmissivity(value) {
   return invoke('set_emissivity', { value })
@@ -57,6 +62,11 @@ export function setDistance(value) {
 /** F5/F10：ROI 统计（矩形/多边形/线段） */
 export function roiStats(shape) {
   return invoke('roi_stats', { shape })
+}
+
+/** 整张图的最高温 / 最低温及其像素坐标（画布温度标注用） */
+export function imageExtrema() {
+  return invoke('image_extrema')
 }
 
 /** 订阅后端事件（批量进度等） */
@@ -94,9 +104,9 @@ export function exportBatchCsv(rows, path) {
   return invoke('export_batch_csv', { rows, path })
 }
 
-/** F8：导出当前图片带标注 PNG（rois: ROI 形状数组） */
-export function exportAnnotated(path, rois = []) {
-  return invoke('export_annotated', { path, rois })
+/** F8：导出当前图片带标注 PNG（rois: ROI 形状数组，marks: 温度标注） */
+export function exportAnnotated(path, rois = [], marks = []) {
+  return invoke('export_annotated', { path, rois, marks })
 }
 
 /** F15：新增台账记录 */

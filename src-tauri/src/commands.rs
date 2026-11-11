@@ -115,24 +115,38 @@ pub fn set_distance(value: f64, state: State<'_, AppState>) -> AppResult<ImageMe
     Ok(img.meta.clone())
 }
 
-/// F5/F10：ROI 统计 + F12 阈值定级
+/// F5/F10：ROI 统计 + 极值坐标 + F12 阈值定级
 #[derive(Serialize)]
 pub struct RoiStatsReply {
     #[serde(flatten)]
     pub stats: roi::RoiStats,
     pub verdict: Verdict,
+    /// 最高温 / 最低温所在像素，供画布标注
+    pub extrema: roi::Extrema,
 }
 
 #[tauri::command]
 pub fn roi_stats(shape: RoiShape, state: State<'_, AppState>) -> AppResult<RoiStatsReply> {
     let guard = state.image.lock().unwrap();
     let img = guard.as_ref().ok_or_else(|| "尚未加载图片".to_string())?;
-    let stats = roi::roi_stats(&img.temps, img.width, img.height, &shape)?;
+    let result = roi::scan(&img.temps, img.width, img.height, Some(&shape))?;
     let verdict = {
         let t = state.thresholds.lock().unwrap();
-        diagnosis::verdict(&stats, &t)
+        diagnosis::verdict(&result.stats, &t)
     };
-    Ok(RoiStatsReply { stats, verdict })
+    Ok(RoiStatsReply {
+        stats: result.stats,
+        verdict,
+        extrema: result.extrema,
+    })
+}
+
+/// 整张图的最高温 / 最低温及其像素坐标（画布全图标注用）
+#[tauri::command]
+pub fn image_extrema(state: State<'_, AppState>) -> AppResult<roi::Extrema> {
+    let guard = state.image.lock().unwrap();
+    let img = guard.as_ref().ok_or_else(|| "尚未加载图片".to_string())?;
+    roi::image_extrema(&img.temps, img.width, img.height)
 }
 
 /// F12：读取缺陷阈值
@@ -243,11 +257,18 @@ pub fn export_batch_csv(
     export::export_batch_csv(&rows, std::path::Path::new(&path))
 }
 
-/// F8：导出当前图片带标注 PNG（伪彩 + ROI 矩形）
+/// 离线地图点位弹窗：按路径生成红外原图缩略图（data URL）
+#[tauri::command]
+pub fn get_thumbnail(path: String) -> AppResult<String> {
+    crate::thumbnail::make_thumbnail(&path, crate::thumbnail::DEFAULT_MAX_EDGE)
+}
+
+/// F8：导出当前图片带标注 PNG（伪彩 + ROI 矩形 + 温度标注）
 #[tauri::command]
 pub fn export_annotated(
     path: String,
     rois: Vec<RoiShape>,
+    marks: Vec<export::TempMark>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let guard = state.image.lock().unwrap();
@@ -281,11 +302,12 @@ pub fn export_annotated(
             }
         })
         .collect();
-    export::export_annotated_png(
+    export::export_annotated_png_with_marks(
         &img.temps,
         img.width,
         img.height,
         &overlays,
+        &marks,
         std::path::Path::new(&path),
     )
 }

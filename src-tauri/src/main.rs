@@ -26,6 +26,8 @@ fn main() {
             set_emissivity,
             set_distance,
             roi_stats,
+            image_extrema,
+            get_thumbnail,
             get_settings,
             set_settings,
             phase_compare,

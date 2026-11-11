@@ -1,6 +1,6 @@
 <script setup>
-// F14：批量处理面板（文件夹遍历 + 进度 + 结果表）
-import { ref } from 'vue'
+// F14：批量处理面板（文件夹遍历 + 进度 + 结果表 / 离线 GPS 点位地图）
+import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { FolderOpened } from '@element-plus/icons-vue'
 import { useBatchStore } from '../stores/batch.js'
@@ -8,10 +8,22 @@ import { useSettingsStore } from '../stores/settings.js'
 import { levelInfo } from '../utils/defects.js'
 import { fmtTemp, fmtDelta } from '../utils/format.js'
 import { pickFolder, pickSave, exportBatchCsv } from '../api/tauri.js'
+import MapView from './MapView.vue'
 
 const batch = useBatchStore()
 const settings = useSettingsStore()
 const recursive = ref(true)
+const resultView = ref('table')
+
+// 解析成功后自动落到地图；失败或无结果时保持表格视图并沿用原有消息提示
+watch(
+  () => batch.running,
+  (running, wasRunning) => {
+    if (wasRunning && !running && batch.summary && batch.items.length && !batch.error) {
+      resultView.value = 'map'
+    }
+  }
+)
 
 async function chooseFolder() {
   const dir = await pickFolder()
@@ -55,6 +67,10 @@ const levelText = (it) => (it.error ? '失败' : levelInfo(it.level).label)
       </el-button>
       <el-checkbox v-model="recursive" :disabled="batch.running">包含子文件夹</el-checkbox>
       <el-button :disabled="!batch.items.length" @click="onExportBatchCsv">批量结果导出</el-button>
+      <div class="view-switch" role="group" aria-label="结果视图">
+        <button type="button" :class="{ active: resultView === 'table' }" :disabled="batch.running" @click="resultView = 'table'">表格</button>
+        <button type="button" :class="{ active: resultView === 'map' }" :disabled="batch.running" @click="resultView = 'map'">地图</button>
+      </div>
       <span class="batch-tip">仅扫描 JPG（御 3T / FLIR 辐射原图）</span>
     </div>
 
@@ -68,44 +84,50 @@ const levelText = (it) => (it.error ? '失败' : levelInfo(it.level).label)
       </p>
     </div>
 
-    <div v-if="batch.summary" class="batch-summary">
-      <div class="sum-card"><b>{{ batch.summary.total }}</b><span>总数</span></div>
-      <div class="sum-card ok"><b>{{ batch.summary.ok }}</b><span>成功</span></div>
-      <div class="sum-card bad"><b>{{ batch.summary.failed }}</b><span>失败</span></div>
-      <div class="sum-card warn">
-        <b>{{ batch.items.filter((i) => !i.error && i.level >= 1).length }}</b><span>超限</span>
+    <template v-else>
+      <div v-if="resultView === 'map' && batch.items.length" class="map-pane">
+        <MapView :items="batch.items" />
       </div>
-    </div>
+      <div v-else-if="!batch.items.length" class="batch-empty">
+        <el-icon :size="44" color="#a8b3c1"><FolderOpened /></el-icon>
+        <p>选择包含辐射原图的文件夹，批量解析测温</p>
+      </div>
+      <template v-else>
+        <div v-if="batch.summary" class="batch-summary">
+          <div class="sum-card"><b>{{ batch.summary.total }}</b><span>总数</span></div>
+          <div class="sum-card ok"><b>{{ batch.summary.ok }}</b><span>成功</span></div>
+          <div class="sum-card bad"><b>{{ batch.summary.failed }}</b><span>失败</span></div>
+          <div class="sum-card warn">
+            <b>{{ batch.items.filter((i) => !i.error && i.level >= 1).length }}</b><span>超限</span>
+          </div>
+        </div>
 
-    <el-table v-if="batch.items.length" :data="batch.items" size="small" stripe height="calc(100% - 170px)">
-      <el-table-column type="index" width="52" label="#" />
-      <el-table-column prop="file_name" label="文件名" min-width="220" show-overflow-tooltip />
-      <el-table-column label="最高温" width="96">
-        <template #default="{ row }">
-          <span :class="{ hot: !row.error }">{{ row.error ? '—' : fmtTemp(row.max) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="最低温" width="96">
-        <template #default="{ row }">{{ row.error ? '—' : fmtTemp(row.min) }}</template>
-      </el-table-column>
-      <el-table-column label="温差ΔT" width="96">
-        <template #default="{ row }">{{ row.error ? '—' : fmtDelta(row.delta_t) }}</template>
-      </el-table-column>
-      <el-table-column label="判定" width="88">
-        <template #default="{ row }">
-          <span v-if="row.error" class="err-text">失败</span>
-          <span v-else class="level-tag" :style="{ background: levelInfo(row.level).color }">
-            {{ levelText(row) }}
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="path" label="路径" min-width="240" show-overflow-tooltip />
-    </el-table>
-
-    <div v-else-if="!batch.running" class="batch-empty">
-      <el-icon :size="44" color="#a8b3c1"><FolderOpened /></el-icon>
-      <p>选择包含辐射原图的文件夹，批量解析测温</p>
-    </div>
+        <el-table v-if="batch.items.length" :data="batch.items" size="small" stripe height="calc(100% - 170px)">
+          <el-table-column type="index" width="52" label="#" />
+          <el-table-column prop="file_name" label="文件名" min-width="220" show-overflow-tooltip />
+          <el-table-column label="最高温" width="96">
+            <template #default="{ row }">
+              <span :class="{ hot: !row.error }">{{ row.error ? '—' : fmtTemp(row.max) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="最低温" width="96">
+            <template #default="{ row }">{{ row.error ? '—' : fmtTemp(row.min) }}</template>
+          </el-table-column>
+          <el-table-column label="温差ΔT" width="96">
+            <template #default="{ row }">{{ row.error ? '—' : fmtDelta(row.delta_t) }}</template>
+          </el-table-column>
+          <el-table-column label="判定" width="88">
+            <template #default="{ row }">
+              <span v-if="row.error" class="err-text">失败</span>
+              <span v-else class="level-tag" :style="{ background: levelInfo(row.level).color }">
+                {{ levelText(row) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="path" label="路径" min-width="240" show-overflow-tooltip />
+        </el-table>
+      </template>
+    </template>
   </div>
 </template>
 
@@ -197,4 +219,31 @@ const levelText = (it) => (it.error ? '失败' : levelInfo(it.level).label)
   color: #fff;
   font-size: 12px;
 }
+
+.view-switch {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--ip-border);
+  border-radius: 8px;
+  background: #f2f4f8;
+}
+.view-switch button {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ip-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.view-switch button:hover:not(:disabled) { color: var(--ip-primary); }
+.view-switch button.active {
+  background: var(--ip-surface);
+  color: var(--ip-primary);
+  font-weight: 600;
+  box-shadow: var(--ip-shadow);
+}
+.view-switch button:disabled { cursor: not-allowed; opacity: 0.55; }
+.map-pane { flex: 1; min-height: 0; }
 </style>

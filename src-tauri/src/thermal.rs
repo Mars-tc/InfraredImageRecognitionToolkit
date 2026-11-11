@@ -333,3 +333,169 @@ fn rationals_to_f64(value: &exif::Value) -> Option<Vec<f64>> {
         _ => None,
     }
 }
+
+// ---------- 地图打点用定位信息 ----------
+
+/// 图片拍摄位置（数值型经纬度，供批量结果与离线地图使用）
+#[derive(Debug, Clone, Serialize)]
+pub struct ImagePosition {
+    pub lat: f64,
+    pub lon: f64,
+    pub datetime: Option<String>,
+}
+
+/// 合法坐标：有限值、经纬度在量程内、排除 (0,0) 这类无定位占位值。
+fn valid_coord(lat: f64, lon: f64) -> bool {
+    lat.is_finite()
+        && lon.is_finite()
+        && (-90.0..=90.0).contains(&lat)
+        && (-180.0..=180.0).contains(&lon)
+        && !(lat.abs() < 1e-6 && lon.abs() < 1e-6)
+}
+
+/// XMP 位于 JPEG 头部 APP1 段，只读前 200KB，避免为取坐标再整文件 IO。
+fn read_xmp_prefix(path: &Path) -> Option<dji::XmpMeta> {
+    use std::io::Read;
+    let file = File::open(path).ok()?;
+    let mut buf = Vec::new();
+    file.take(200_000).read_to_end(&mut buf).ok()?;
+    Some(dji::read_xmp_meta(&buf))
+}
+
+/// 解析 `"lat, lon"` 形式的 GPS 字符串
+fn parse_gps_pair(gps: &str) -> Option<(f64, f64)> {
+    let mut parts = gps.split(',');
+    let lat = parts.next()?.trim().parse::<f64>().ok()?;
+    let lon = parts.next()?.trim().parse::<f64>().ok()?;
+    valid_coord(lat, lon).then_some((lat, lon))
+}
+
+/// 读取图片定位信息：EXIF GPS 优先，大疆 XMP GPS 兜底。
+///
+/// 与 `ImageMeta.gps` 的展示字符串不同，这里返回可直接投影的数值坐标；
+/// 无定位或坐标无效时返回 `None`，调用方计入「无坐标」统计，不阻断解析。
+pub fn read_position(path: &Path) -> Option<ImagePosition> {
+    let exif = read_exif(path);
+    let from_exif = match (exif.gps_lat, exif.gps_lon) {
+        (Some(lat), Some(lon)) if valid_coord(lat, lon) => Some((lat, lon)),
+        _ => None,
+    };
+    let mut datetime = exif.datetime.clone();
+    if let (Some((lat, lon)), true) = (from_exif, datetime.is_some()) {
+        return Some(ImagePosition {
+            lat,
+            lon,
+            datetime,
+        });
+    }
+    let (lat, lon) = match from_exif {
+        // 坐标有效但 EXIF 无时间：补一次 XMP 时间，读不到也不影响打点
+        Some(pair) => {
+            if let Some(xmp) = read_xmp_prefix(path) {
+                datetime = datetime.or(xmp.create_date);
+            }
+            pair
+        }
+        None => {
+            let xmp = read_xmp_prefix(path)?;
+            datetime = datetime.or_else(|| xmp.create_date.clone());
+            parse_gps_pair(xmp.gps.as_deref()?)?
+        }
+    };
+    Some(ImagePosition { lat, lon, datetime })
+}
+
+#[cfg(test)]
+mod position_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ir_position_{}_{}_{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("创建测试临时目录");
+        dir
+    }
+
+    /// 真实御 3T 样本（主 crate 与 backend-tests 两种 manifest 路径都兼容）
+    fn sample_path() -> PathBuf {
+        if let Ok(p) = std::env::var("IR_SAMPLE_JPG") {
+            let p = PathBuf::from(p);
+            if p.exists() {
+                return p;
+            }
+        }
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for rel in [
+            "../DJI_20260804234634_0002_T.JPG",
+            "../../DJI_20260804234634_0002_T.JPG",
+        ] {
+            let p = manifest.join(rel);
+            if p.exists() {
+                return p;
+            }
+        }
+        panic!("未找到御3T样本（设置 IR_SAMPLE_JPG 指向真实辐射原图）");
+    }
+
+    #[test]
+    fn valid_coord_rejects_out_of_range_and_zero() {
+        assert!(valid_coord(21.8869589, 111.755511474));
+        assert!(valid_coord(-33.9, 151.2));
+        assert!(!valid_coord(0.0, 0.0));
+        assert!(!valid_coord(91.0, 120.0));
+        assert!(!valid_coord(30.0, 181.0));
+        assert!(!valid_coord(f64::NAN, 120.0));
+        assert!(!valid_coord(30.0, f64::INFINITY));
+    }
+
+    #[test]
+    fn read_position_reads_real_sample_xmp() {
+        let pos = read_position(&sample_path()).expect("真实样本应能读到 XMP GPS");
+        assert!((pos.lat - 21.8869589).abs() < 1e-4, "lat={}", pos.lat);
+        assert!((pos.lon - 111.755511474).abs() < 1e-4, "lon={}", pos.lon);
+    }
+
+    #[test]
+    fn read_position_uses_xmp_when_exif_missing() {
+        let dir = scratch("xmp_only");
+        let p = dir.join("xmp_only.jpg");
+        let mut bytes = b"\xff\xd8\xff\xe0".to_vec();
+        bytes.extend_from_slice(
+            br#"<x:xmpmeta drone-dji:GpsLatitude="+31.2345" drone-dji:GpsLongitude="+121.5678" xmp:CreateDate="2026-08-04T23:46:34">"#,
+        );
+        std::fs::write(&p, &bytes).unwrap();
+
+        let pos = read_position(&p).expect("应读到 XMP GPS");
+        assert!((pos.lat - 31.2345).abs() < 1e-6);
+        assert!((pos.lon - 121.5678).abs() < 1e-6);
+        assert_eq!(pos.datetime.as_deref(), Some("2026-08-04T23:46:34"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn read_position_rejects_invalid_xmp_coords() {
+        let dir = scratch("invalid");
+        let p = dir.join("invalid.jpg");
+        std::fs::write(
+            &p,
+            br#"drone-dji:GpsLatitude="0.0" drone-dji:GpsLongitude="0.0""#,
+        )
+        .unwrap();
+        assert!(read_position(&p).is_none());
+        std::fs::write(
+            &p,
+            br#"drone-dji:GpsLatitude="95.0" drone-dji:GpsLongitude="121.5""#,
+        )
+        .unwrap();
+        assert!(read_position(&p).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
