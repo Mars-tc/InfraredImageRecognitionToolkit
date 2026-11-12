@@ -110,12 +110,17 @@ jobs:
       - name: 校验产物 glibc 版本
         run: |
           set -eux
-          BIN="src-tauri/target/release/ir-inspection-tool"
-          ls -la "${BIN}" 2>&1 | tee glibc-check.log
-          test -x "${BIN}"
-          MAX=$(objdump -T "${BIN}" \
+          # 直接检查交付 deb 内的可执行文件，避免依赖二进制命名
+          DEB=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
+          echo "deb: ${DEB}" | tee glibc-check.log
+          rm -rf /tmp/deb-root
+          dpkg-deb -x "${DEB}" /tmp/deb-root
+          find /tmp/deb-root -type f -perm -111 -printf '%p\n' | tee -a glibc-check.log
+          MAX=$(find /tmp/deb-root -type f -perm -111 -print0 \
+            | xargs -0 -r -n1 objdump -T 2>/dev/null \
             | grep -o 'GLIBC_[0-9]\+\(\.[0-9]\+\)\+' \
             | sed 's/GLIBC_//' | sort -uV | tail -1)
+          test -n "${MAX}"
           echo "产物依赖的最高 GLIBC 符号版本：${MAX}" | tee -a glibc-check.log
           # 取两者中较高者：若高于 TARGET_GLIBC 则产物无法在 UOS20 上运行
           HIGHEST=$(printf '%s\n' "${TARGET_GLIBC}" "${MAX}" | sort -V | tail -1)
