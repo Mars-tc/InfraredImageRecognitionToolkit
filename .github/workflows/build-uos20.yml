@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 env:
   # 前端构建要求 Node ^20.19 || >=22.12（Vite 8）；Node 官方二进制最低 glibc 2.28，可在 buster 运行
@@ -137,25 +138,36 @@ jobs:
 
       - name: 收集失败诊断
         if: failure()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set +e
           {
+            echo "=== 环境 ==="
+            echo "node: $(node -v 2>&1)"
+            echo "pnpm: $(pnpm --version 2>&1)"
+            echo "tauri CLI: $(pnpm tauri --version 2>&1)"
+            echo "cargo: $(cargo --version 2>&1)"
+            echo "rustc: $(rustc --version 2>&1)"
+            echo "webkit2gtk-4.0: $(pkg-config --modversion webkit2gtk-4.0 2>&1)"
+            echo "node_modules/.bin/tauri:"
+            ls -la node_modules/.bin/tauri* 2>&1
+            echo ""
+            echo "=== 构建 deb 步骤输出 ==="
+            cat /tmp/tauri-build.log 2>&1
+          } > /tmp/diagnostics.log
+          # check run 的 output.text 可匿名读取，便于定位需要登录才能看的原始日志
+          node scripts/emit-ci-diagnostics.mjs /tmp/diagnostics.log
+          {
             echo "### 构建失败诊断"
-            echo ""
-            echo "- webkit2gtk-4.0: $(pkg-config --modversion webkit2gtk-4.0 2>&1)"
-            echo "- tauri CLI: $(pnpm tauri --version 2>&1 | head -1)"
-            echo "- rustc: $(rustc --version 2>&1)"
-            echo "- node: $(node -v 2>&1)"
-            echo ""
             echo '```'
-            tail -80 /tmp/tauri-build.log 2>&1
+            tail -80 /tmp/diagnostics.log 2>&1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          # 以 workflow command 生成公开可读的 annotations，避免必须登录才能看到错误行
-          grep -iE "error|failed|not found|mismatch|cannot find" /tmp/tauri-build.log 2>/dev/null \
+          grep -iE "error|failed|not found|mismatch|cannot find" /tmp/diagnostics.log 2>/dev/null \
             | tail -8 | sed 's/%/%25/g; s/\r/%0D/g' \
             | while IFS= read -r line; do echo "::error::${line}"; done
-          tail -80 /tmp/tauri-build.log 2>&1 || true
+          tail -80 /tmp/diagnostics.log 2>&1 || true
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
