@@ -111,15 +111,16 @@ jobs:
         run: |
           set -eux
           BIN="src-tauri/target/release/ir-inspection-tool"
+          ls -la "${BIN}" 2>&1 | tee glibc-check.log
           test -x "${BIN}"
           MAX=$(objdump -T "${BIN}" \
             | grep -o 'GLIBC_[0-9]\+\(\.[0-9]\+\)\+' \
             | sed 's/GLIBC_//' | sort -uV | tail -1)
-          echo "产物依赖的最高 GLIBC 符号版本：${MAX}"
+          echo "产物依赖的最高 GLIBC 符号版本：${MAX}" | tee -a glibc-check.log
           # 取两者中较高者：若高于 TARGET_GLIBC 则产物无法在 UOS20 上运行
           HIGHEST=$(printf '%s\n' "${TARGET_GLIBC}" "${MAX}" | sort -V | tail -1)
           if [ "${HIGHEST}" != "${TARGET_GLIBC}" ]; then
-            echo "错误：产物需要 GLIBC ${MAX}，超出 UOS20 可用的 ${TARGET_GLIBC}"
+            echo "错误：产物需要 GLIBC ${MAX}，超出 UOS20 可用的 ${TARGET_GLIBC}" | tee -a glibc-check.log
             exit 1
           fi
 
@@ -161,8 +162,17 @@ jobs:
             echo "node_modules/.bin/tauri:"
             ls -la node_modules/.bin/tauri* 2>&1
             echo ""
-            echo "=== 构建 deb 步骤输出 ==="
-            cat build.log 2>&1
+            echo "=== 构建 deb 步骤输出（尾部） ==="
+            tail -120 build.log 2>&1
+            echo ""
+            echo "=== GLIBC 断言输出 ==="
+            cat glibc-check.log 2>&1
+            echo ""
+            echo "=== 环境摘要（务必保留在末尾） ==="
+            echo "glibc: $(ldd --version 2>&1 | head -1)"
+            echo "os: $(head -2 /etc/os-release | tr '\n' ' ')"
+            echo "webkit2gtk-4.0: $(pkg-config --modversion webkit2gtk-4.0 2>&1)"
+            echo "rustc: $(rustc --version 2>&1)"
           } > diagnostics.log
           # check run 的 output.text 可匿名读取，便于定位需要登录才能看的原始日志
           node scripts/emit-ci-diagnostics.mjs diagnostics.log
