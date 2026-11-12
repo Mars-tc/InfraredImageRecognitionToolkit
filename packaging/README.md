@@ -21,7 +21,7 @@ AppImage 同样依赖宿主的 glibc（不自带 glibc），因此也必须在 D
 
 1. 在 `debian:buster` 容器内构建（buster 已 EOL，脚本自动把 apt 源切到 `archive.debian.org`）；
 2. 安装 Node 20.19+（Vite 8 要求 `^20.19 || >=22.12`）、`pnpm@10.24.0`、Rust 1.90（`image 0.25` 要求 ≥ 1.88）；
-3. `pnpm install --frozen-lockfile` 后用 cargo 版 tauri CLI 执行 `cargo tauri build --bundles deb`（`cargo install tauri-cli --version 1.8.3 --locked`，与 `Cargo.lock` 中的 tauri crate 同版本；npm 版 CLI 1.x 止于 1.6.3，会被版本校验拒绝）；
+3. `pnpm install --frozen-lockfile` 后用项目自带的 `@tauri-apps/cli` 1.6.3 执行 `pnpm tauri build --bundles deb`（Tauri 1.x 的 npm/cargo CLI 均止于 1.6.x，无需额外安装）；
 4. 校验产物依赖的最高 GLIBC 符号版本不得超过 2.28，超出即判定构建失败；
 5. 额外尝试打包 AppImage（可选产物，失败不阻塞 deb）；
 6. 产物重命名为 ASCII 文件名并生成 `SHA256SUMS`。
@@ -55,9 +55,6 @@ chmod +x ir-inspection-tool_0.1.0_amd64.AppImage
 
 交付包不在本机构建，本机只做开发与调试：
 
-> 首次使用需安装与 `Cargo.lock` 中 tauri crate（1.8.3）同版本的 tauri CLI：
-> `cargo install tauri-cli --version 1.8.3 --locked`
-
 ```bash
 node scripts/build-local.mjs env      # 环境自检
 node scripts/build-local.mjs install  # 安装前端依赖
@@ -76,5 +73,4 @@ node scripts/build-local.mjs test     # 跑全部自动化验收
 | deb 安装提示缺 `libwebkit2gtk-4.0-37` | 从 UOS20 官方源离线拉取该包及依赖后重装 |
 | 没有 AppImage 产物 | linuxdeploy 在容器内不可用时属预期，deb 为必需产物 |
 | 本机 `pnpm` 找不到 | 执行 `corepack enable pnpm`（按 package.json 的 packageManager 自动准备 pnpm@10.24.0） |
-| 提示 tauri CLI 与 crate 版本不兼容 | npm 的 `@tauri-apps/cli` 1.x 止于 1.6.3，改用 cargo 版 `cargo install tauri-cli --version 1.8.3 --locked` |
 | 本机 `cargo` 找不到 | `build-local.mjs` 已自动注入 `~/.cargo/bin`，或手动 `export PATH="$HOME/.cargo/bin:$PATH"` |

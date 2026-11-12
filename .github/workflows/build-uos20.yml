@@ -21,8 +21,6 @@ env:
   NODE_BUILD_VERSION: '20.19.4'
   # image 0.25 要求 Rust >= 1.88.0
   RUST_VERSION: '1.90.0'
-  # tauri crate 锁定为 1.8.3，CLI 必须同版本（npm 上 1.x CLI 止于 1.6.3，只能用 cargo 版）
-  TAURI_CLI_VERSION: '1.8.3'
   # UOS20 目标 glibc 上限；构建产物不得依赖更高版本符号
   TARGET_GLIBC: '2.28'
 
@@ -81,16 +79,6 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: 安装 tauri CLI（与 tauri crate 版本一致）
-        run: |
-          set -eux
-          # npm 上 @tauri-apps/cli 的 1.x 只发布到 1.6.3，
-          # 与 Cargo.lock 中的 tauri 1.8.3 不匹配会被 CLI 拒绝，故使用 cargo 版 1.8.3
-          # --locked 在依赖版本已变更/yanked 时会直接失败，故失败时回退到重新解析
-          cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked 2>&1 | tee /tmp/tauri-cli-install.log \
-            || cargo install tauri-cli --version "${TAURI_CLI_VERSION}" 2>&1 | tee /tmp/tauri-cli-install.log
-          cargo tauri --version
-
       - name: 缓存 Cargo 依赖
         uses: actions/cache@v4
         with:
@@ -104,9 +92,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: 构建 deb 安装包
+        # Tauri 1.x 的 npm CLI 只发布到 1.6.3（crates.io 上 cargo 版最高 1.6.6），
+        # 直接用项目自带的 @tauri-apps/cli，不额外安装 cargo 子命令
         run: |
           set -o pipefail
-          cargo tauri build --bundles deb 2>&1 | tee /tmp/tauri-build.log
+          pnpm tauri build --bundles deb 2>&1 | tee /tmp/tauri-build.log
 
       - name: 校验产物 glibc 版本
         run: |
@@ -126,7 +116,7 @@ jobs:
 
       - name: 构建 AppImage（可选产物，失败不阻塞 deb）
         continue-on-error: true
-        run: cargo tauri build --bundles appimage
+        run: pnpm tauri build --bundles appimage
 
       - name: 收集产物并生成校验和
         run: |
@@ -145,7 +135,7 @@ jobs:
           cat SHA256SUMS
           ls -lh
 
-      - name: 收集失败诊断（写入 Job Summary）
+      - name: 收集失败诊断
         if: failure()
         run: |
           set +e
@@ -153,22 +143,19 @@ jobs:
             echo "### 构建失败诊断"
             echo ""
             echo "- webkit2gtk-4.0: $(pkg-config --modversion webkit2gtk-4.0 2>&1)"
-            echo "- tauri CLI: $(cargo tauri --version 2>&1 | head -1)"
+            echo "- tauri CLI: $(pnpm tauri --version 2>&1 | head -1)"
             echo "- rustc: $(rustc --version 2>&1)"
             echo "- node: $(node -v 2>&1)"
             echo ""
-            echo '#### tauri CLI 安装'
             echo '```'
-            tail -40 /tmp/tauri-cli-install.log 2>&1
-            echo '```'
-            echo ""
-            echo '#### 构建日志'
-            echo '```'
-            tail -60 /tmp/tauri-build.log 2>&1
+            tail -80 /tmp/tauri-build.log 2>&1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          tail -40 /tmp/tauri-cli-install.log 2>&1 || true
-          tail -60 /tmp/tauri-build.log 2>&1 || true
+          # 以 workflow command 生成公开可读的 annotations，避免必须登录才能看到错误行
+          grep -iE "error|failed|not found|mismatch|cannot find" /tmp/tauri-build.log 2>/dev/null \
+            | tail -8 | sed 's/%/%25/g; s/\r/%0D/g' \
+            | while IFS= read -r line; do echo "::error::${line}"; done
+          tail -80 /tmp/tauri-build.log 2>&1 || true
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4

@@ -10,9 +10,8 @@
 //   node scripts/build-local.mjs test     转发到 scripts/run-tests.mjs
 //   node scripts/build-local.mjs clean    清理 dist 与 release 产物
 //
-// 说明：npm 上的 @tauri-apps/cli 1.x 只发布到 1.6.3，而 Cargo.lock 锁定的
-// tauri crate 为 1.8.3，两者主次版本不一致时 CLI 会直接拒绝执行；
-// 因此优先使用 cargo 版 tauri CLI（cargo install tauri-cli --version 1.8.3 --locked）。
+// 说明：优先使用项目自带的 npm 版 @tauri-apps/cli（Tauri 1.x CLI 最终发布版 1.6.3），
+// 若本机另行安装了 cargo 版 tauri-cli（1.6.x）也可作为备选。
 //
 // 注意：本机编译产物依赖本机 glibc（开发机为 2.38），
 // 无法安装到 UOS20（Debian 10 底层，glibc 2.28）；
@@ -112,16 +111,8 @@ function resolvePnpm() {
   return null
 }
 
-/**
- * tauri CLI 解析：优先 cargo 版（与 tauri crate 版本一致），
- * 回退到 npm 版 pnpm tauri（版本不匹配时会被 CLI 拒绝）。
- */
+/** tauri CLI 解析：优先项目自带的 npm 版，回退到已安装的 cargo 版。 */
 function resolveTauriCli() {
-  const cargoCli = spawnSync('cargo', ['tauri', '--version'], { encoding: 'utf8', env })
-  if (cargoCli.status === 0) {
-    const version = (cargoCli.stdout || '').trim().split('\n')[0]
-    return { cmd: 'cargo', args: ['tauri'], version, source: 'cargo' }
-  }
   const pnpm = resolvePnpm()
   if (pnpm) {
     const npmCli = spawnSync(pnpm.cmd, [...pnpm.args, 'tauri', '--version'], { encoding: 'utf8', env })
@@ -129,6 +120,11 @@ function resolveTauriCli() {
       const version = (npmCli.stdout || '').trim().split('\n')[0]
       return { cmd: pnpm.cmd, args: [...pnpm.args, 'tauri'], version, source: 'npm' }
     }
+  }
+  const cargoCli = spawnSync('cargo', ['tauri', '--version'], { encoding: 'utf8', env })
+  if (cargoCli.status === 0) {
+    const version = (cargoCli.stdout || '').trim().split('\n')[0]
+    return { cmd: 'cargo', args: ['tauri'], version, source: 'cargo' }
   }
   return null
 }
@@ -162,9 +158,9 @@ function pnpmRun(args) {
 function tauriRun(args) {
   const cli = resolveTauriCli()
   if (!cli) {
-    console.error('未找到 tauri CLI。请执行其一：')
-    console.error('  cargo install tauri-cli --version 1.8.3 --locked   # 与 Cargo.lock 中的 tauri crate 版本一致（推荐）')
-    console.error('  npm i -g @tauri-apps/cli@1.6.3                  # 与 tauri crate 1.8.3 不匹配，可能被拒绝')
+    console.error('未找到 tauri CLI。请先安装前端依赖：')
+    console.error('  node scripts/build-local.mjs install   # 安装含 @tauri-apps/cli 1.6.3 的依赖')
+    console.error('  或 cargo install tauri-cli --version 1.6.6（备选）')
     process.exit(1)
   }
   return run(cli.cmd, [...cli.args, ...args])
@@ -189,7 +185,7 @@ function showEnv() {
   probe('cargo', 'cargo', ['--version'])
   probe('rustc', 'rustc', ['--version'])
   const cli = resolveTauriCli()
-  console.log(`tauri CLI：${cli ? `${cli.version}（${cli.source}）` : '未检测到（建议 cargo install tauri-cli --version 1.8.3 --locked）'}`)
+  console.log(`tauri CLI：${cli ? `${cli.version}（${cli.source}）` : '未检测到（先执行 node scripts/build-local.mjs install）'}`)
   probe('glibc', 'ldd', ['--version'])
   probe('webkit2gtk-4.0', 'pkg-config', ['--modversion', 'webkit2gtk-4.0'])
   console.log('')
