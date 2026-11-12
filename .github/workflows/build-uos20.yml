@@ -107,12 +107,32 @@ jobs:
           cat build.log
           exit $status
 
+      - name: 规范化 deb 包名
+        run: |
+          set -eux
+          # productName 为中文「红外照片分析工具」，Tauri 会把它直接写进 DEBIAN/control 的 Package 字段，
+          # dpkg 要求包名以字母/数字开头且仅含 [a-z0-9+.-]，否则安装时报 invalid package name。
+          DEB=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
+          echo "原始 Package: $(dpkg-deb -f "${DEB}" Package)"
+          rm -rf /tmp/deb-fix
+          dpkg-deb -R "${DEB}" /tmp/deb-fix
+          sed -i 's/^Package: .*/Package: ir-inspection-tool/' /tmp/deb-fix/DEBIAN/control
+          dpkg-deb -b /tmp/deb-fix /tmp/ir-inspection-tool.deb
+          mv /tmp/ir-inspection-tool.deb "${DEB}"
+          echo "修正后 Package: $(dpkg-deb -f "${DEB}" Package)"
+
       - name: 校验产物 glibc 版本
         run: |
           set -eux
           # 直接检查交付 deb 内的可执行文件，避免依赖二进制命名
           DEB=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
           echo "deb: ${DEB}" | tee glibc-check.log
+          PKG=$(dpkg-deb -f "${DEB}" Package)
+          echo "Package 字段: ${PKG}" | tee -a glibc-check.log
+          if ! printf '%s\n' "${PKG}" | grep -Eq '^[a-z0-9][a-z0-9+.-]*$'; then
+            echo "错误：deb 包名不合法，dpkg -i 会拒绝安装" | tee -a glibc-check.log
+            exit 1
+          fi
           rm -rf /tmp/deb-root
           dpkg-deb -x "${DEB}" /tmp/deb-root
           find /tmp/deb-root -type f -perm -111 -printf '%p\n' | tee -a glibc-check.log

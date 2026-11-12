@@ -22,9 +22,10 @@ AppImage 同样依赖宿主的 glibc（不自带 glibc），因此也必须在 D
 1. 在 `debian:buster` 容器内构建（buster 已 EOL，脚本自动把 apt 源切到 `archive.debian.org`）；
 2. 安装 Node 20.19+（Vite 8 要求 `^20.19 || >=22.12`）、`pnpm@10.24.0`、Rust 1.90（`image 0.25` 要求 ≥ 1.88）；
 3. `pnpm install --frozen-lockfile` 后用项目自带的 `@tauri-apps/cli` 1.6.3 执行 `pnpm tauri build --bundles deb`（Tauri 1.x 的 npm/cargo CLI 均止于 1.6.x，无需额外安装）；
-4. 校验产物依赖的最高 GLIBC 符号版本不得超过 2.28，超出即判定构建失败；
-5. 额外尝试打包 AppImage（可选产物，失败不阻塞 deb）；
-6. 产物重命名为 ASCII 文件名并生成 `SHA256SUMS`。
+4. 把 `DEBIAN/control` 的 `Package` 字段规范化为 `ir-inspection-tool`（中文 `productName` 会被 dpkg 判为非法包名），并断言包名合法；
+5. 校验产物依赖的最高 GLIBC 符号版本不得超过 2.28，超出即判定构建失败；
+6. 额外尝试打包 AppImage（可选产物，失败不阻塞 deb）；
+7. 产物重命名为 ASCII 文件名并生成 `SHA256SUMS`。
 
 ## 三、产物
 
@@ -43,6 +44,11 @@ sha256sum -c SHA256SUMS
 # 2. UOS20 内网机离线安装
 sudo dpkg -i ir-inspection-tool_0.1.0_amd64.deb
 # 若提示缺 libwebkit2gtk-4.0-37，先从 UOS20 官方源离线拉取该包及依赖再安装
+
+# 若手上是早期产物（Package 字段为中文），可就地修正后重打包再安装：
+dpkg-deb -R 旧包.deb /tmp/deb-fix
+sed -i 's/^Package: .*/Package: ir-inspection-tool/' /tmp/deb-fix/DEBIAN/control
+dpkg-deb -b /tmp/deb-fix ir-inspection-tool_0.1.0_amd64.deb
 
 # 3. AppImage 方式（免安装）
 chmod +x ir-inspection-tool_0.1.0_amd64.AppImage
@@ -74,3 +80,4 @@ node scripts/build-local.mjs test     # 跑全部自动化验收
 | 没有 AppImage 产物 | linuxdeploy 在容器内不可用时属预期，deb 为必需产物 |
 | 本机 `pnpm` 找不到 | 执行 `corepack enable pnpm`（按 package.json 的 packageManager 自动准备 pnpm@10.24.0） |
 | 本机 `cargo` 找不到 | `build-local.mjs` 已自动注入 `~/.cargo/bin`，或手动 `export PATH="$HOME/.cargo/bin:$PATH"` |
+| `dpkg -i` 报 `invalid package name` / 包名必须以字母或数字开头 | 早期产物的 `Package` 字段是中文；下载最新 CI 产物，或按「四、内网分发与安装」中的命令就地修正 control 后重打包 |

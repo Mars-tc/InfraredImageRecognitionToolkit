@@ -90,7 +90,7 @@ UOS20 内网机的安装包由 **GitHub Actions** 在 Debian 10 容器中构建�
 - 触发：Actions 页手动 `Run workflow`；push 到 `main` 或提 PR 做构建校验；推送 `v*` 标签额外发布 GitHub Release
 - 产物：`ir-inspection-tool_0.1.0_amd64.deb`（必需）、`ir-inspection-tool_0.1.0_amd64.AppImage`（可选）、`SHA256SUMS`
 - 工具链：Node 20.19+、`pnpm@10.24.0`、Rust 1.90、项目自带的 `@tauri-apps/cli` 1.6.3（Tauri 1.x CLI 的最终发布版；cargo 版 `tauri-cli` 也只到 1.6.x）
-- 校验：流水线断言产物依赖的最高 GLIBC 符号版本不超过 2.28，超出即判定构建失败
+- 校验：流水线把 deb 的 `Package` 字段规范化为 ASCII 并断言合法，同时断言产物最高 GLIBC 符号版本 ≤ 2.28，任一不满足即判定构建失败
 
 **本机构建不产出交付包**：开发机 glibc 高于 UOS20（如 Deepin 25 为 2.38），AppImage 同样依赖宿主 glibc。完整说明与内网安装步骤见 [`packaging/README.md`](packaging/README.md)。
 
