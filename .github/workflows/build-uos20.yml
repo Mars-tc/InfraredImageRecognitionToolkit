@@ -73,6 +73,10 @@ jobs:
           # 显式指定 CARGO_HOME / RUSTUP_HOME，避免出现 rustc: command not found（退出码 127）
           export RUSTUP_HOME=/usr/local/rustup
           export CARGO_HOME=/usr/local/cargo
+          # 必须写入 GITHUB_ENV：每个 step 是独立 shell，只 export 的话后续步骤
+          # 的 rustup 会去默认目录找 toolchain，报 "no default is configured"
+          echo "RUSTUP_HOME=${RUSTUP_HOME}" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=${CARGO_HOME}" >> "$GITHUB_ENV"
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --no-modify-path --default-toolchain "${RUST_VERSION}" --profile minimal
           echo "${CARGO_HOME}/bin" >> "$GITHUB_PATH"
@@ -97,7 +101,8 @@ jobs:
         # 直接用项目自带的 @tauri-apps/cli，不额外安装 cargo 子命令
         run: |
           set -o pipefail
-          pnpm tauri build --bundles deb 2>&1 | tee /tmp/tauri-build.log
+          : > /tmp/tauri-build.log
+          pnpm tauri build --bundles deb 2>&1 | tee -a /tmp/tauri-build.log
 
       - name: 校验产物 glibc 版本
         run: |
