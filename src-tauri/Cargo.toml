@@ -3,6 +3,13 @@ name = "ir-inspection-tool"
 version = "0.1.0"
 description = "红外照片分析工具（配网无人机红外巡检离线分析）"
 edition = "2021"
+default-run = "ir-inspection-tool"
+
+# 显式声明主程序：src/bin/ 下还有 dump_temps 命令行工具，
+# 不声明时 tauri CLI 会把扫描到的唯一 bin（dump_temps）误判为主二进制打进安装包
+[[bin]]
+name = "ir-inspection-tool"
+path = "src/main.rs"
 
 [features]
 # tauri CLI 执行 build 时会自动追加 --features custom-protocol，
