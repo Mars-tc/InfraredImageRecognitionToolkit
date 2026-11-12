@@ -4,6 +4,11 @@ version = "0.1.0"
 description = "红外照片分析工具（配网无人机红外巡检离线分析）"
 edition = "2021"
 
+[features]
+# tauri CLI 执行 build 时会自动追加 --features custom-protocol，
+# 用于把前端资源内嵌进二进制（生产模式）；缺少它会导致 cargo 报 "does not contain this feature"
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }
 
