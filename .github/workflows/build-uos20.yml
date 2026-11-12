@@ -100,9 +100,12 @@ jobs:
         # Tauri 1.x 的 npm CLI 只发布到 1.6.3（crates.io 上 cargo 版最高 1.6.6），
         # 直接用项目自带的 @tauri-apps/cli，不额外安装 cargo 子命令
         run: |
-          set -o pipefail
-          : > /tmp/tauri-build.log
-          pnpm tauri build --bundles deb 2>&1 | tee -a /tmp/tauri-build.log
+          set +e
+          # 写到工作区文件（容器 job 的 /tmp 在步骤间不一定共享），并立即回显到步骤日志
+          pnpm tauri build --bundles deb > build.log 2>&1
+          status=$?
+          cat build.log
+          exit $status
 
       - name: 校验产物 glibc 版本
         run: |
@@ -159,20 +162,20 @@ jobs:
             ls -la node_modules/.bin/tauri* 2>&1
             echo ""
             echo "=== 构建 deb 步骤输出 ==="
-            cat /tmp/tauri-build.log 2>&1
-          } > /tmp/diagnostics.log
+            cat build.log 2>&1
+          } > diagnostics.log
           # check run 的 output.text 可匿名读取，便于定位需要登录才能看的原始日志
-          node scripts/emit-ci-diagnostics.mjs /tmp/diagnostics.log
+          node scripts/emit-ci-diagnostics.mjs diagnostics.log
           {
             echo "### 构建失败诊断"
             echo '```'
-            tail -80 /tmp/diagnostics.log 2>&1
+            tail -80 diagnostics.log 2>&1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          grep -iE "error|failed|not found|mismatch|cannot find" /tmp/diagnostics.log 2>/dev/null \
+          grep -iE "error|failed|not found|mismatch|cannot find" diagnostics.log 2>/dev/null \
             | tail -8 | sed 's/%/%25/g; s/\r/%0D/g' \
             | while IFS= read -r line; do echo "::error::${line}"; done
-          tail -80 /tmp/diagnostics.log 2>&1 || true
+          tail -80 diagnostics.log 2>&1 || true
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
