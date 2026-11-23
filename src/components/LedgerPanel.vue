@@ -6,6 +6,7 @@ import { Search, Document } from '@element-plus/icons-vue'
 import { useLedgerStore } from '../stores/ledger.js'
 import { DEFECT_LEVELS, levelInfo } from '../utils/defects.js'
 import { fmtTemp, fmtDelta } from '../utils/format.js'
+import { pickCsv, pickSave, exportLedgerCsv, importLedgerCsv } from '../api/tauri.js'
 import ReportDialog from './ReportDialog.vue'
 
 const ledger = useLedgerStore()
@@ -22,6 +23,30 @@ async function doSearch() {
 async function onLevelFilter(v) {
   ledger.levelFilter = v
   await ledger.setFilter(kwInput.value, v)
+}
+
+async function onExportCsv() {
+  try {
+    const date = new Date().toISOString().slice(0, 10)
+    const path = await pickSave(`巡检台账_${date}.csv`, ['csv'])
+    if (!path) return
+    const n = await exportLedgerCsv(path)
+    ElMessage.success(`已导出 ${n} 条台账记录`)
+  } catch (e) {
+    ElMessage.error(typeof e === 'string' ? e : e?.message || '导出失败')
+  }
+}
+
+async function onImportCsv() {
+  try {
+    const path = await pickCsv()
+    if (!path) return
+    const n = await importLedgerCsv(path)
+    await ledger.refresh()
+    ElMessage.success(`已导入 ${n} 条台账记录`)
+  } catch (e) {
+    ElMessage.error(typeof e === 'string' ? e : e?.message || '导入失败')
+  }
 }
 
 async function removeRow(row) {
@@ -70,6 +95,8 @@ function saveRow(row) {
         <el-option v-for="l in DEFECT_LEVELS" :key="l.value" :label="l.label" :value="l.value" />
       </el-select>
       <el-button type="primary" @click="doSearch">查询</el-button>
+      <el-button @click="onExportCsv">导出 CSV</el-button>
+      <el-button @click="onImportCsv">导入 CSV</el-button>
       <el-button :disabled="!selectedIds.length" :icon="Document" @click="reportOpen = true">
         生成缺陷报告（{{ selectedIds.length }}）
       </el-button>

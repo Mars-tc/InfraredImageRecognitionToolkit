@@ -123,7 +123,12 @@ pub struct RoiStatsReply {
     pub verdict: Verdict,
     /// 最高温 / 最低温所在像素，供画布标注
     pub extrema: roi::Extrema,
+    /// ROI 内温度分布（16 桶）
+    pub histogram: roi::Histogram,
 }
+
+/// ROI 直方图分桶数（固定值，避免前端再传参）
+const HISTOGRAM_BINS: usize = 16;
 
 #[tauri::command]
 pub fn roi_stats(shape: RoiShape, state: State<'_, AppState>) -> AppResult<RoiStatsReply> {
@@ -134,11 +139,27 @@ pub fn roi_stats(shape: RoiShape, state: State<'_, AppState>) -> AppResult<RoiSt
         let t = state.thresholds.lock().unwrap();
         diagnosis::verdict(&result.stats, &t)
     };
+    let histogram = roi::histogram(
+        &img.temps,
+        img.width,
+        img.height,
+        Some(&shape),
+        HISTOGRAM_BINS,
+    )?;
     Ok(RoiStatsReply {
         stats: result.stats,
         verdict,
         extrema: result.extrema,
+        histogram,
     })
+}
+
+/// 线段 ROI 沿路径的温度剖面
+#[tauri::command]
+pub fn line_profile(shape: RoiShape, state: State<'_, AppState>) -> AppResult<Vec<f32>> {
+    let guard = state.image.lock().unwrap();
+    let img = guard.as_ref().ok_or_else(|| "尚未加载图片".to_string())?;
+    roi::line_profile(&img.temps, img.width, img.height, &shape)
 }
 
 /// 整张图的最高温 / 最低温及其像素坐标（画布全图标注用）
@@ -192,7 +213,7 @@ pub fn phase_compare(
     Ok(diagnosis::phase_compare(&entries, &t))
 }
 
-/// F14：批量解析文件夹（后台线程 + 进度事件 batch-progress）
+/// F14：批量解析文件夹（整批放阻塞线程 + 进度事件节流）
 #[tauri::command]
 pub async fn batch_parse(
     dir: String,
@@ -202,40 +223,38 @@ pub async fn batch_parse(
 ) -> AppResult<BatchSummary> {
     let thresholds = state.thresholds.lock().unwrap().clone();
     let dir_path = std::path::PathBuf::from(&dir);
-    // 扫描放阻塞线程，避免大文件夹卡住 async 运行时
-    let files = tauri::async_runtime::spawn_blocking(move || {
-        batch::scan_folder(&dir_path, recursive)
+    // 扫描 + 逐张解析整体放进阻塞线程，避免长任务占住 async 运行时
+    tauri::async_runtime::spawn_blocking(move || -> AppResult<BatchSummary> {
+        let files = batch::scan_folder(&dir_path, recursive)?;
+        let total = files.len();
+        if total == 0 {
+            return Err("该文件夹下没有找到 JPG 辐射图".to_string());
+        }
+        // 非红外照片直接忽略，仅统计数量；进度约 1% 上报一次（最多约 200 次）
+        let stride = batch::progress_stride(total);
+        let (items, skipped) = batch::parse_radiometric(&files, &thresholds, |done, item| {
+            if done != 1 && done != total && done % stride != 0 {
+                return;
+            }
+            let _ = app.emit_all(
+                "batch-progress",
+                serde_json::json!({
+                    "done": done,
+                    "total": total,
+                    "file": &item.file_name,
+                    "error": &item.error,
+                }),
+            );
+        });
+        Ok(BatchSummary {
+            total,
+            ok: items.len(),
+            skipped,
+            items,
+        })
     })
     .await
-    .map_err(|e| format!("任务执行失败：{e}"))??;
-
-    let total = files.len();
-    if total == 0 {
-        return Err("该文件夹下没有找到 JPG 辐射图".to_string());
-    }
-    let mut items = Vec::with_capacity(total);
-    let mut ok = 0usize;
-    let mut failed = 0usize;
-    for (i, path) in files.iter().enumerate() {
-        let item = batch::parse_one(path, &thresholds);
-        if item.error.is_some() {
-            failed += 1;
-        } else {
-            ok += 1;
-        }
-        let done = i + 1;
-        let _ = app.emit_all(
-            "batch-progress",
-            serde_json::json!({ "done": done, "total": total, "file": item.file_name, "error": item.error }),
-        );
-        items.push(item);
-    }
-    Ok(BatchSummary {
-        total,
-        ok,
-        failed,
-        items,
-    })
+    .map_err(|e| format!("任务执行失败：{e}"))?
 }
 
 /// F8：导出当前图片温度矩阵 CSV
@@ -318,6 +337,26 @@ pub fn ledger_add(input: LedgerInput, state: State<'_, AppState>) -> AppResult<i
     state.with_db(|conn| db::insert(conn, &input))
 }
 
+/// F15：批量新增台账记录（批量入库）
+#[tauri::command]
+pub fn ledger_add_many(inputs: Vec<LedgerInput>, state: State<'_, AppState>) -> AppResult<usize> {
+    state.with_db(|conn| db::insert_many(conn, &inputs))
+}
+
+/// F15：导出台账 CSV
+#[tauri::command]
+pub fn export_ledger_csv(path: String, state: State<'_, AppState>) -> AppResult<usize> {
+    let records = state.with_db(|conn| db::query(conn, "", None, u32::MAX, 0))?;
+    crate::ledger_csv::export_ledger_csv(&records, std::path::Path::new(&path))
+}
+
+/// F15：导入台账 CSV
+#[tauri::command]
+pub fn import_ledger_csv(path: String, state: State<'_, AppState>) -> AppResult<usize> {
+    let inputs = crate::ledger_csv::import_ledger_csv(std::path::Path::new(&path))?;
+    state.with_db(|conn| db::insert_many(conn, &inputs))
+}
+
 /// F15：查询台账
 #[tauri::command]
 pub fn ledger_query(
@@ -356,9 +395,17 @@ pub fn export_report(
     inspector: String,
     date: String,
     org: String,
+    with_images: bool,
     state: State<'_, AppState>,
 ) -> AppResult<String> {
     let records = state.with_db(|conn| db::get_by_ids(conn, &ids))?;
-    crate::report::export_report(&records, std::path::Path::new(&path), &inspector, &date, &org)?;
+    crate::report::export_report(
+        &records,
+        std::path::Path::new(&path),
+        &inspector,
+        &date,
+        &org,
+        with_images,
+    )?;
     Ok(path)
 }

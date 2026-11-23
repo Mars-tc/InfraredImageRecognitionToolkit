@@ -85,7 +85,34 @@ window.__TAURI_IPC__ = (msg) => {
       if (mx >= 100 || dt >= 30) { level = 3; reason = '最高温 ' + mx.toFixed(1) + '℃ 或温差 ' + dt.toFixed(1) + '℃ 达紧急档'; }
       else if (mx >= 85 || dt >= 20) { level = 2; reason = '最高温 ' + mx.toFixed(1) + '℃ 或温差 ' + dt.toFixed(1) + '℃ 达重大档'; }
       else if (mx >= 70 || dt >= 10) { level = 1; reason = '最高温 ' + mx.toFixed(1) + '℃ 超阈值或温差 ' + dt.toFixed(1) + '℃ 超限'; }
-      ok({ max: mx, min: mn, avg: sum / pts.length, delta_t: dt, count: pts.length, verdict: { level, reason, exceeded: level >= 1 } });
+      const counts = new Array(16).fill(0);
+      const span = mx - mn || 1;
+      for (const v of pts) counts[Math.min(15, Math.floor((v - mn) / span * 16))]++;
+      ok({
+        max: mx, min: mn, avg: sum / pts.length, delta_t: dt, count: pts.length,
+        verdict: { level, reason, exceeded: level >= 1 },
+        histogram: { min: mn, max: mx, counts }
+      });
+    } else if (cmd === 'line_profile') {
+      const t = await ensureTemps();
+      const w = window.__MOCK_SAMPLE__.width, h = window.__MOCK_SAMPLE__.height;
+      const pts = msg.shape?.points || [];
+      const out = [];
+      for (let i = 1; i < pts.length; i++) {
+        const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+        const steps = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) * 2));
+        for (let s = 0; s <= steps; s++) {
+          const k = s / steps;
+          const x = Math.floor(x0 + (x1 - x0) * k);
+          const y = Math.floor(y0 + (y1 - y0) * k);
+          if (x >= 0 && y >= 0 && x < w && y < h) out.push(t[y * w + x]);
+        }
+      }
+      ok(out);
+    } else if (cmd === 'ledger_add_many') {
+      ok((msg.inputs || []).length);
+    } else if (cmd === 'export_ledger_csv' || cmd === 'import_ledger_csv') {
+      ok(0);
     } else if (cmd === 'get_settings') {
       ok({ joint_temp: 70, delta_t: 10, phase_delta_t: 5 });
     } else if (cmd === 'set_settings') {

@@ -20,6 +20,7 @@ let overlayEl = null // 独立的标注画布（高分辨率超采样，文字�
 let overlayCtx = null
 let overlayDpr = 1
 let baseImage = null
+let isoImage = null // 超温区域高亮覆盖层
 let draftObj = null // 仅矩形拖拽预览使用
 let rectStart = null
 const drawingPoints = ref([]) // 多边形/线段顶点（场景坐标），引导层据此绘制
@@ -39,6 +40,7 @@ const TOOLS = [
   { key: 'rect', label: '矩形' },
   { key: 'poly', label: '多边形' },
   { key: 'line', label: '线段' },
+  { key: 'spot', label: '点测温' },
   { key: 'pan', label: '平移' }
 ]
 
@@ -123,10 +125,15 @@ onBeforeUnmount(() => {
 watch(() => imageStore.temps, () => {
   roiStore.clearAll()
   baseImage = null
+  isoImage = null
   fabric?.clear()
   renderBase()
 })
 watch(() => [imageStore.palette, imageStore.scaleMin, imageStore.scaleMax], renderBase)
+watch(
+  () => [imageStore.isothermOn, imageStore.isothermThreshold],
+  updateIsotherm
+)
 watch(() => roiStore.activeTool, (tool) => {
   // 矩形拖拽到一半就切工具时会留下草稿框，先清理
   if (tool !== 'rect') cancelRectDraft()
@@ -144,7 +151,8 @@ watch(
     roiStore.selectedId,
     roiStore.rois
       .map((r) => `${r.stats?.max_pos?.join(',') ?? ''}|${r.stats?.min_pos?.join(',') ?? ''}`)
-      .join(';')
+      .join(';'),
+    roiStore.spots.map((s) => `${s.x},${s.y}`).join(';')
   ],
   () => fabric?.requestRenderAll()
 )
@@ -189,6 +197,55 @@ function renderBase() {
     baseImage.setElement(off)
   }
   fitToView()
+  updateIsotherm()
+  fabric.requestRenderAll()
+}
+
+/** 超温区域覆盖层：命中阈值的像素画成半透明红色，叠在伪彩底图之上、ROI 之下 */
+function updateIsotherm() {
+  if (!fabric || !imageStore.hasImage) return
+  if (!imageStore.isothermOn) {
+    if (isoImage) isoImage.visible = false
+    fabric.requestRenderAll()
+    return
+  }
+  const threshold = Number(imageStore.isothermThreshold)
+  if (!Number.isFinite(threshold)) return
+
+  const w = imageStore.width
+  const h = imageStore.height
+  const temps = imageStore.temps
+  const off = document.createElement('canvas')
+  off.width = w
+  off.height = h
+  const ctx = off.getContext('2d')
+  const imgData = ctx.createImageData(w, h)
+  const data = imgData.data
+  for (let i = 0; i < temps.length; i++) {
+    if (temps[i] >= threshold) {
+      const p = i * 4
+      data[p] = 255
+      data[p + 1] = 45
+      data[p + 2] = 30
+      data[p + 3] = 90
+    }
+  }
+  ctx.putImageData(imgData, 0, 0)
+
+  if (!isoImage) {
+    isoImage = new FabricImage(off, {
+      selectable: false,
+      evented: false,
+      originX: 'left',
+      originY: 'top'
+    })
+    fabric.add(isoImage)
+    const baseIndex = fabric.getObjects().indexOf(baseImage)
+    fabric.moveObjectTo(isoImage, baseIndex + 1)
+  } else {
+    isoImage.setElement(off)
+  }
+  isoImage.visible = true
   fabric.requestRenderAll()
 }
 
@@ -302,6 +359,13 @@ function bindEvents() {
       roiStore.drawing = true
       hoverScene = { x: p.x, y: p.y }
       fabric.requestRenderAll()
+    } else if (tool === 'spot') {
+      const p = fabric.getScenePoint(opt.e)
+      const x = Math.floor(p.x)
+      const y = Math.floor(p.y)
+      if (x >= 0 && y >= 0 && x < imageStore.width && y < imageStore.height) {
+        roiStore.addSpot(x, y)
+      }
     }
   })
 
@@ -482,6 +546,7 @@ function drawOverlay() {
   drawRoiLabels(ctx, toScreen)
   if (drawingActive.value && drawingPoints.value.length) drawDraft(ctx, toScreen)
   drawTempMarks(ctx, toScreen)
+  drawSpotMarks(ctx, toScreen)
   ctx.restore()
 }
 
@@ -594,6 +659,52 @@ function drawTempMarks(ctx, toScreen) {
     ctx.fillStyle = '#ffffff'
     ctx.fillText(m.label, x + 10, y + bh / 2)
   }
+}
+
+/** 点测温标记：小圆环 + 十字 + 编号温度标签（温度实时计算） */
+function drawSpotMarks(ctx, toScreen) {
+  const spots = roiStore.spots
+  if (!spots.length) return
+  const cw = fabric.getWidth()
+  const ch = fabric.getHeight()
+  ctx.font = OVERLAY_FONT
+  ctx.textBaseline = 'middle'
+  ctx.setLineDash([])
+  spots.forEach((spot, i) => {
+    const s = toScreen({ x: spot.x + 0.5, y: spot.y + 0.5 })
+    const x = Math.round(s.x)
+    const y = Math.round(s.y)
+    const color = '#FF6B3D'
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(x, y, 4, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(x - 8, y)
+    ctx.lineTo(x - 3, y)
+    ctx.moveTo(x + 3, y)
+    ctx.lineTo(x + 8, y)
+    ctx.moveTo(x, y - 8)
+    ctx.lineTo(x, y - 3)
+    ctx.moveTo(x, y + 3)
+    ctx.lineTo(x, y + 8)
+    ctx.stroke()
+
+    const label = `S${i + 1} ${fmtTemp(imageStore.tempAt(spot.x, spot.y))}`
+    const bw = Math.ceil(ctx.measureText(label).width) + 16
+    const bh = 20
+    const bx = Math.round(Math.min(Math.max(0, x + 10), Math.max(0, cw - bw)))
+    let by = y - bh - 6
+    if (by < TOOLBAR_BOTTOM) by = y + 10
+    by = Math.round(Math.min(Math.max(0, by), Math.max(0, ch - bh)))
+    ctx.fillStyle = 'rgba(16, 22, 30, 0.94)'
+    ctx.fillRect(bx, by, bw, bh)
+    ctx.fillStyle = color
+    ctx.fillRect(bx, by, 3, bh)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillText(label, bx + 8, by + bh / 2)
+  })
 }
 
 function drawDraft(ctx, toScreen) {

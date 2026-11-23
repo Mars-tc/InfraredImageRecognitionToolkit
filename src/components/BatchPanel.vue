@@ -1,6 +1,6 @@
 <script setup>
 // F14：批量处理面板（文件夹遍历 + 进度 + 结果表 / 离线 GPS 点位地图）
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { FolderOpened } from '@element-plus/icons-vue'
 import { useBatchStore } from '../stores/batch.js'
@@ -9,18 +9,35 @@ import { levelInfo } from '../utils/defects.js'
 import { fmtTemp, fmtDelta } from '../utils/format.js'
 import { pickFolder, pickSave, exportBatchCsv } from '../api/tauri.js'
 import MapView from './MapView.vue'
+import BatchLedgerDialog from './BatchLedgerDialog.vue'
 
 const batch = useBatchStore()
 const settings = useSettingsStore()
+const ledgerOpen = ref(false)
 const recursive = ref(true)
 const resultView = ref('table')
+const page = ref(1)
+const pageSize = ref(100)
+// 结果表分页：Element Plus 表格无虚拟滚动，全量渲染数千行会阻塞主线程
+const pagedItems = computed(() =>
+  batch.items.slice((page.value - 1) * pageSize.value, page.value * pageSize.value)
+)
+const overLimitCount = computed(
+  () => batch.items.filter((i) => !i.error && i.level >= 1).length
+)
+const showPagination = computed(() => batch.items.length > pageSize.value)
+// 分页条显示时预留 44px 高度，避免表格底部被遮挡 / 小批量时留白
+const tableHeight = computed(() =>
+  showPagination.value ? 'calc(100% - 214px)' : 'calc(100% - 170px)'
+)
 
-// 解析成功后自动落到地图；失败或无结果时保持表格视图并沿用原有消息提示
+// 解析成功后：小批量直接看点位，大批量保持表格（分页），避免一次性挂载地图
 watch(
   () => batch.running,
   (running, wasRunning) => {
     if (wasRunning && !running && batch.summary && batch.items.length && !batch.error) {
-      resultView.value = 'map'
+      page.value = 1
+      resultView.value = batch.items.length <= 300 ? 'map' : 'table'
     }
   }
 )
@@ -39,7 +56,8 @@ async function chooseFolder() {
   if (batch.error) {
     ElMessage.error(batch.error)
   } else {
-    ElMessage.success(`解析完成：成功 ${batch.summary.ok} 张，失败 ${batch.summary.failed} 张`)
+    const skippedText = batch.summary.skipped ? `，已忽略 ${batch.summary.skipped} 张非红外照片` : ''
+    ElMessage.success(`解析完成：成功 ${batch.summary.ok} 张${skippedText}`)
   }
 }
 
@@ -79,11 +97,12 @@ const levelText = (it) => (it.error ? '失败' : levelInfo(it.level).label)
       </el-button>
       <el-checkbox v-model="recursive" :disabled="batch.running">包含子文件夹</el-checkbox>
       <el-button :disabled="!batch.items.length" @click="onExportBatchCsv">批量结果导出</el-button>
+      <el-button :disabled="!batch.items.length" @click="ledgerOpen = true">批量入库</el-button>
       <div class="view-switch" role="group" aria-label="结果视图">
         <button type="button" :class="{ active: resultView === 'table' }" :disabled="batch.running" @click="resultView = 'table'">表格</button>
         <button type="button" :class="{ active: resultView === 'map' }" :disabled="batch.running" @click="resultView = 'map'">地图</button>
       </div>
-      <span class="batch-tip">仅扫描 JPG（御 3T / FLIR 辐射原图）</span>
+      <span class="batch-tip">仅扫描 JPG，自动忽略非红外照片（御 3T / FLIR 辐射原图）</span>
     </div>
 
     <div v-if="batch.running" class="batch-progress">
@@ -102,20 +121,23 @@ const levelText = (it) => (it.error ? '失败' : levelInfo(it.level).label)
       </div>
       <div v-else-if="!batch.items.length" class="batch-empty">
         <el-icon :size="44" color="#a8b3c1"><FolderOpened /></el-icon>
-        <p>选择包含辐射原图的文件夹，批量解析测温</p>
+        <p v-if="batch.summary && batch.summary.skipped">
+          未发现红外原图，已忽略 {{ batch.summary.skipped }} 张非红外照片
+        </p>
+        <p v-else>选择包含辐射原图的文件夹，批量解析测温</p>
       </div>
       <template v-else>
         <div v-if="batch.summary" class="batch-summary">
           <div class="sum-card"><b>{{ batch.summary.total }}</b><span>总数</span></div>
           <div class="sum-card ok"><b>{{ batch.summary.ok }}</b><span>成功</span></div>
-          <div class="sum-card bad"><b>{{ batch.summary.failed }}</b><span>失败</span></div>
+          <div class="sum-card"><b>{{ batch.summary.skipped }}</b><span>已忽略</span></div>
           <div class="sum-card warn">
-            <b>{{ batch.items.filter((i) => !i.error && i.level >= 1).length }}</b><span>超限</span>
+            <b>{{ overLimitCount }}</b><span>超限</span>
           </div>
         </div>
 
-        <el-table v-if="batch.items.length" :data="batch.items" size="small" stripe height="calc(100% - 170px)">
-          <el-table-column type="index" width="52" label="#" />
+        <el-table v-if="batch.items.length" :data="pagedItems" size="small" stripe :height="tableHeight">
+          <el-table-column type="index" width="52" label="#" :index="(i) => (page - 1) * pageSize + i + 1" />
           <el-table-column prop="file_name" label="文件名" min-width="220" show-overflow-tooltip />
           <el-table-column label="最高温" width="96">
             <template #default="{ row }">
@@ -138,8 +160,23 @@ const levelText = (it) => (it.error ? '失败' : levelInfo(it.level).label)
           </el-table-column>
           <el-table-column prop="path" label="路径" min-width="240" show-overflow-tooltip />
         </el-table>
+
+        <div v-if="showPagination" class="batch-pagination">
+          <el-pagination
+            v-model:current-page="page"
+            v-model:page-size="pageSize"
+            :page-sizes="[50, 100, 200]"
+            :total="batch.items.length"
+            layout="total, sizes, prev, pager, next, jumper"
+            size="small"
+            background
+            @size-change="page = 1"
+          />
+        </div>
       </template>
     </template>
+
+    <BatchLedgerDialog v-model="ledgerOpen" :items="batch.items" />
   </div>
 </template>
 
@@ -179,6 +216,11 @@ const levelText = (it) => (it.error ? '失败' : levelInfo(it.level).label)
 .batch-summary {
   display: flex;
   gap: 12px;
+}
+
+.batch-pagination {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .sum-card {

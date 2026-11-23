@@ -15,6 +15,7 @@ const ledger = useLedgerStore()
 const inspector = ref('')
 const org = ref('配电运维班')
 const date = ref(new Date().toISOString().slice(0, 10))
+const withImages = ref(true)
 const exporting = ref(false)
 
 watch(
@@ -40,7 +41,14 @@ async function onExport() {
   if (!path) return
   exporting.value = true
   try {
-    await exportReport(props.ids, path, inspector.value || '未填写', date.value, org.value)
+    await exportReport(
+      props.ids,
+      path,
+      inspector.value || '未填写',
+      date.value,
+      org.value,
+      withImages.value
+    )
     ElMessage.success('报告已生成')
     emit('update:modelValue', false)
   } catch (e) {
@@ -70,6 +78,9 @@ async function onExport() {
       </el-form-item>
       <el-form-item label="记录数">
         <span>{{ ids.length }} 条（在台账表格中勾选）</span>
+      </el-form-item>
+      <el-form-item label="缺陷图片">
+        <el-checkbox v-model="withImages">附缺陷图片（原图存在时）</el-checkbox>
       </el-form-item>
     </el-form>
     <template #footer>

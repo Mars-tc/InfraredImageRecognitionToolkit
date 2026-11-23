@@ -2,11 +2,14 @@
 // F5/F10：ROI 统计面板（max/min/avg/ΔT + F12 定级 + F11 三相告警）
 import { Warning } from '@element-plus/icons-vue'
 import { useRoiStore } from '../stores/roi.js'
+import { useImageStore } from '../stores/image.js'
 import { useSettingsStore } from '../stores/settings.js'
 import { levelInfo } from '../utils/defects.js'
 import { fmtTemp, fmtDelta } from '../utils/format.js'
+import RoiCharts from './RoiCharts.vue'
 
 const roiStore = useRoiStore()
+const imageStore = useImageStore()
 const settingsStore = useSettingsStore()
 settingsStore.load()
 
@@ -69,6 +72,25 @@ function removeRoi(id) {
         </div>
         <p v-else-if="roi.error" class="roi-err">{{ roi.error }}</p>
         <p v-else class="roi-err">统计中…</p>
+        <RoiCharts
+          v-if="roiStore.selectedId === roi.id"
+          :profile="roi.profile"
+          :histogram="roi.histogram"
+        />
+      </div>
+    </div>
+
+    <div v-if="roiStore.spots.length" class="spot-section">
+      <div class="spot-head">
+        <span class="spot-title">点测温</span>
+        <el-button size="small" text type="danger" @click="roiStore.clearSpots">清空</el-button>
+      </div>
+      <div v-for="(spot, i) in roiStore.spots" :key="spot.id" class="spot-item">
+        <span class="spot-dot" />
+        <span class="spot-name">S{{ i + 1 }}</span>
+        <span class="spot-temp">{{ fmtTemp(imageStore.tempAt(spot.x, spot.y)) }}</span>
+        <span class="spot-pos">({{ spot.x }}, {{ spot.y }})</span>
+        <el-button size="small" text type="danger" @click="roiStore.removeSpot(spot.id)">删除</el-button>
       </div>
     </div>
 
@@ -219,6 +241,58 @@ function removeRoi(id) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.spot-section {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--ip-border);
+}
+
+.spot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.spot-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ip-text);
+}
+
+.spot-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spot-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid #ff6b3d;
+  flex: none;
+}
+
+.spot-name {
+  color: var(--ip-text-secondary);
+}
+
+.spot-temp {
+  font-weight: 600;
+  color: var(--ip-danger);
+}
+
+.spot-pos {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--ip-text-muted);
 }
 
 .phase-alert {

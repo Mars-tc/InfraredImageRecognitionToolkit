@@ -92,6 +92,19 @@ pub fn insert(conn: &Connection, input: &LedgerInput) -> AppResult<i64> {
     Ok(conn.last_insert_rowid())
 }
 
+/// 批量新增记录（单事务提交，批量入库用），返回成功写入条数
+pub fn insert_many(conn: &Connection, inputs: &[LedgerInput]) -> AppResult<usize> {
+    if inputs.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction().map_err(db_err)?;
+    for input in inputs {
+        insert(&tx, input)?;
+    }
+    tx.commit().map_err(db_err)?;
+    Ok(inputs.len())
+}
+
 /// 更新记录
 pub fn update(conn: &Connection, id: i64, input: &LedgerInput) -> AppResult<usize> {
     conn.execute(
@@ -282,5 +295,17 @@ mod tests {
         let counts = super::count_by_level(&conn).unwrap();
         assert_eq!(counts[2], 1);
         assert_eq!(counts[3], 1);
+    }
+
+    #[test]
+    fn insert_many_writes_all_rows() {
+        let conn = mem_db();
+        let a = sample();
+        let mut b = sample();
+        b.tower_no = "N-13".into();
+        let n = insert_many(&conn, &[a, b]).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(query(&conn, "", None, 10, 0).unwrap().len(), 2);
+        assert_eq!(insert_many(&conn, &[]).unwrap(), 0);
     }
 }

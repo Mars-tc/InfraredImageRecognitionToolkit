@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildTempMarks, HOT_COLOR, COLD_COLOR } from '../src/utils/tempMarks.js'
+import { buildSpotMarks, buildTempMarks, HOT_COLOR, COLD_COLOR } from '../src/utils/tempMarks.js'
 
 const extrema = { max: 75.2, min: 30.1, max_pos: [10, 20], min_pos: [3, 4] }
 const rois = [
@@ -62,4 +62,17 @@ test('全图极值缺坐标时仍可标注选中 ROI', () => {
   const marks = buildTempMarks({ extrema: partial, rois, selectedId: 'a' })
   assert.equal(marks.length, 2)
   assert.ok(marks.every((m) => m.scope === 'roi'))
+})
+
+test('点测温标注：编号、实时温度与导出字段', () => {
+  const spots = [{ id: 's1', x: 2, y: 3 }, { id: 's2', x: 4, y: 5 }]
+  const temps = { '2,3': 31.25, '4,5': null }
+  const marks = buildSpotMarks({ spots, tempAt: (x, y) => temps[`${x},${y}`] })
+  assert.equal(marks.length, 2)
+  assert.deepEqual([marks[0].x, marks[0].y], [2, 3])
+  assert.equal(marks[0].ascii, 'S1 31.3C')
+  assert.equal(marks[0].scope, 'spot')
+  assert.equal(marks[0].color, HOT_COLOR)
+  assert.equal(marks[1].ascii, 'S2 --C')
+  assert.deepEqual(buildSpotMarks(), [])
 })

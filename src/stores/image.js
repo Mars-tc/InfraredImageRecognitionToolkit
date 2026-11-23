@@ -22,6 +22,8 @@ export const useImageStore = defineStore('image', () => {
   const hover = ref(null) // { x, y, temp }
   const extrema = ref(null) // 全图极值 { max, min, max_pos, min_pos }
   const showTempMarks = ref(true) // 画布温度标注总开关（会话内有效，不落盘）
+  const isothermOn = ref(false) // 超温区域高亮开关
+  const isothermThreshold = ref(70) // 超温高亮阈值（℃）
 
   const lut = computed(() => buildLut(palette.value))
 
@@ -54,6 +56,15 @@ export const useImageStore = defineStore('image', () => {
 
   function toggleTempMarks() {
     showTempMarks.value = !showTempMarks.value
+  }
+
+  function setIsotherm(on, threshold) {
+    isothermOn.value = !!on
+    if (Number.isFinite(threshold)) isothermThreshold.value = threshold
+  }
+
+  function toggleIsotherm() {
+    isothermOn.value = !isothermOn.value
   }
 
   async function load(path, distance = null) {
@@ -146,9 +157,10 @@ export const useImageStore = defineStore('image', () => {
   return {
     meta, temps, width, height,
     palette, scaleMin, scaleMax, zoom, panX, panY,
-    loading, error, hover, extrema, showTempMarks, lut, hasImage, effectiveMin, effectiveMax,
+    loading, error, hover, extrema, showTempMarks,
+    isothermOn, isothermThreshold, lut, hasImage, effectiveMin, effectiveMax,
     tempAt, load, setPalette, setScale, autoScale,
     changeEmissivity, changeDistance, setHover, clearHover, reset, autoLoadFromUrl,
-    refreshExtrema, toggleTempMarks
+    refreshExtrema, toggleTempMarks, setIsotherm, toggleIsotherm
   }
 })

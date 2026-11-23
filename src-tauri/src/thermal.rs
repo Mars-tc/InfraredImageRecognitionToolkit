@@ -8,7 +8,7 @@
 //! 普通导出预览图（无原始热数据）两条路径都失败，给出明确中文提示。
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufRead, BufReader, Cursor, Seek};
 use std::path::Path;
 
 // 注意：kamadak-exif 包的 lib 名是 `exif`（Cargo.toml [lib] name 重命名）
@@ -97,9 +97,16 @@ impl LoadedImage {
     }
 }
 
-/// 解析辐射 R-JPEG。`distance_override` 可手动指定测量距离（米）。
+/// 解析辐射 R-JPEG。读取一次文件字节后交给 [`load_rad_image_from_bytes`]。
 pub fn load_rad_image(path: &str, distance_override: Option<f64>) -> AppResult<LoadedImage> {
     let p = Path::new(path);
+    validate_jpeg_path(p, path)?;
+    let bytes = std::fs::read(p).map_err(|e| format!("读取文件失败：{}", e))?;
+    load_rad_image_from_bytes(path, &bytes, distance_override)
+}
+
+/// 路径形态校验：文件存在且扩展名为 jpg / jpeg
+fn validate_jpeg_path(p: &Path, path: &str) -> AppResult<()> {
     if !p.exists() {
         return Err(format!("文件不存在：{}", path));
     }
@@ -114,8 +121,64 @@ pub fn load_rad_image(path: &str, distance_override: Option<f64>) -> AppResult<L
             ext
         ));
     }
+    Ok(())
+}
 
-    // 1) 标准 FLIR 辐射图（FFF 段）
+/// 用已读入内存的 JPEG 字节解析辐射图（批量导入复用同一份字节，避免重复磁盘 IO）。
+///
+/// 解析顺序：大疆 APP3/APP4 热数据优先（批量主力机型），失败再回退标准 FLIR FFF 段。
+pub fn load_rad_image_from_bytes(
+    path: &str,
+    bytes: &[u8],
+    distance_override: Option<f64>,
+) -> AppResult<LoadedImage> {
+    let p = Path::new(path);
+    validate_jpeg_path(p, path)?;
+
+    // 1) 大疆 R-JPEG（APP3/APP4）：同一份字节同时供热数据、EXIF、XMP 使用
+    let dji_err = match dji::parse_dji_rjpeg(bytes) {
+        Ok(img) => {
+            let distance = distance_override.unwrap_or(img.params.object_distance);
+            let temps = temperature::compute_temps(&img.raw, &img.settings, distance);
+            let (temp_min, temp_max) = temperature::temp_range(&temps);
+            let exif = read_exif_from_bytes(bytes);
+            let xmp = dji::read_xmp_meta(bytes);
+
+            let meta = ImageMeta {
+                path: path.to_string(),
+                file_name: file_name_of(p),
+                camera_make: exif.make.clone().or(xmp.make.clone()),
+                camera_model: exif.model.clone().or(xmp.model.clone()),
+                datetime: exif.datetime.clone().or(xmp.create_date.clone()),
+                gps: exif.gps_string().or(xmp.gps.clone()),
+                width: img.width,
+                height: img.height,
+                emissivity: img.params.emissivity,
+                distance,
+                humidity: Some(img.params.relative_humidity),
+                reflected_temp: Some(img.params.reflected_temperature),
+                atmospheric_temp: Some(img.params.atmospheric_temperature),
+                ir_window_temp: Some(img.params.ir_window_temperature),
+                temp_min,
+                temp_max,
+                distance_from_exif: distance_override.is_none() && img.params.from_app4,
+                source_kind: "dji".to_string(),
+            };
+            return Ok(LoadedImage {
+                raw: img.raw,
+                settings: img.settings,
+                settings_json: img.settings_json,
+                width: img.width,
+                height: img.height,
+                distance,
+                meta,
+                temps,
+            });
+        }
+        Err(e) => e,
+    };
+
+    // 2) 标准 FLIR 辐射图（FFF 段）
     if let Ok(ti) = ThermalImage::try_from_rjpeg_path(p) {
         let width = ti.image.ncols();
         let height = ti.image.nrows();
@@ -127,7 +190,7 @@ pub fn load_rad_image(path: &str, distance_override: Option<f64>) -> AppResult<L
         let settings_json = serde_json::to_value(&settings)
             .map_err(|e| format!("标定参数序列化失败：{}", e))?;
 
-        let exif = read_exif(p);
+        let exif = read_exif_from_bytes(bytes);
         let distance = distance_override
             .or(exif.subject_distance)
             .unwrap_or(DEFAULT_DISTANCE);
@@ -166,52 +229,10 @@ pub fn load_rad_image(path: &str, distance_override: Option<f64>) -> AppResult<L
         });
     }
 
-    // 2) 大疆 R-JPEG（APP3/APP4）
-    let bytes = std::fs::read(p).map_err(|e| format!("读取文件失败：{}", e))?;
-    match dji::parse_dji_rjpeg(&bytes) {
-        Ok(img) => {
-            let distance = distance_override.unwrap_or(img.params.object_distance);
-            let temps = temperature::compute_temps(&img.raw, &img.settings, distance);
-            let (temp_min, temp_max) = temperature::temp_range(&temps);
-            let exif = read_exif(p);
-            let xmp = dji::read_xmp_meta(&bytes);
-
-            let meta = ImageMeta {
-                path: path.to_string(),
-                file_name: file_name_of(p),
-                camera_make: exif.make.clone().or(xmp.make.clone()),
-                camera_model: exif.model.clone().or(xmp.model.clone()),
-                datetime: exif.datetime.clone().or(xmp.create_date.clone()),
-                gps: exif.gps_string().or(xmp.gps.clone()),
-                width: img.width,
-                height: img.height,
-                emissivity: img.params.emissivity,
-                distance,
-                humidity: Some(img.params.relative_humidity),
-                reflected_temp: Some(img.params.reflected_temperature),
-                atmospheric_temp: Some(img.params.atmospheric_temperature),
-                ir_window_temp: Some(img.params.ir_window_temperature),
-                temp_min,
-                temp_max,
-                distance_from_exif: distance_override.is_none() && img.params.from_app4,
-                source_kind: "dji".to_string(),
-            };
-            Ok(LoadedImage {
-                raw: img.raw,
-                settings: img.settings,
-                settings_json: img.settings_json,
-                width: img.width,
-                height: img.height,
-                distance,
-                meta,
-                temps,
-            })
-        }
-        Err(e) => Err(format!(
-            "{}\n（标准 FLIR 解析也未成功：请确认这是辐射原图 R-JPEG，而非普通导出预览图）",
-            e
-        )),
-    }
+    Err(format!(
+        "{}\n（标准 FLIR 解析也未成功：请确认这是辐射原图 R-JPEG，而非普通导出预览图）",
+        dji_err
+    ))
 }
 
 fn file_name_of(p: &Path) -> String {
@@ -222,6 +243,7 @@ fn file_name_of(p: &Path) -> String {
 
 // ---------- EXIF ----------
 
+#[derive(Default)]
 struct ExifInfo {
     make: Option<String>,
     model: Option<String>,
@@ -241,19 +263,20 @@ impl ExifInfo {
 }
 
 fn read_exif(path: &Path) -> ExifInfo {
-    let mut info = ExifInfo {
-        make: None,
-        model: None,
-        datetime: None,
-        gps_lat: None,
-        gps_lon: None,
-        subject_distance: None,
-    };
     let file = match File::open(path) {
         Ok(f) => f,
-        Err(_) => return info,
+        Err(_) => return ExifInfo::default(),
     };
-    let exif = match ExifReader::new().read_from_container(&mut BufReader::new(file)) {
+    read_exif_from_reader(&mut BufReader::new(file))
+}
+
+fn read_exif_from_bytes(bytes: &[u8]) -> ExifInfo {
+    read_exif_from_reader(&mut BufReader::new(Cursor::new(bytes)))
+}
+
+fn read_exif_from_reader<R: BufRead + Seek>(reader: &mut R) -> ExifInfo {
+    let mut info = ExifInfo::default();
+    let exif = match ExifReader::new().read_from_container(reader) {
         Ok(e) => e,
         Err(_) => return info,
     };
@@ -376,28 +399,47 @@ fn parse_gps_pair(gps: &str) -> Option<(f64, f64)> {
 /// 无定位或坐标无效时返回 `None`，调用方计入「无坐标」统计，不阻断解析。
 pub fn read_position(path: &Path) -> Option<ImagePosition> {
     let exif = read_exif(path);
+    position_from_exif(&exif, || read_xmp_prefix(path))
+}
+
+/// 用已读入内存的字节读取定位信息（批量导入避免重复读文件）
+pub fn read_position_from_bytes(bytes: &[u8]) -> Option<ImagePosition> {
+    let exif = read_exif_from_bytes(bytes);
+    position_from_exif(&exif, || Some(dji::read_xmp_meta(bytes)))
+}
+
+/// 从已解析元数据还原数值坐标（成功解析时不再重复扫描 EXIF / XMP）
+pub fn position_from_meta(meta: &ImageMeta) -> Option<ImagePosition> {
+    let (lat, lon) = parse_gps_pair(meta.gps.as_deref()?)?;
+    Some(ImagePosition {
+        lat,
+        lon,
+        datetime: meta.datetime.clone(),
+    })
+}
+
+fn position_from_exif<F>(exif: &ExifInfo, read_xmp: F) -> Option<ImagePosition>
+where
+    F: FnOnce() -> Option<dji::XmpMeta>,
+{
     let from_exif = match (exif.gps_lat, exif.gps_lon) {
         (Some(lat), Some(lon)) if valid_coord(lat, lon) => Some((lat, lon)),
         _ => None,
     };
     let mut datetime = exif.datetime.clone();
     if let (Some((lat, lon)), true) = (from_exif, datetime.is_some()) {
-        return Some(ImagePosition {
-            lat,
-            lon,
-            datetime,
-        });
+        return Some(ImagePosition { lat, lon, datetime });
     }
     let (lat, lon) = match from_exif {
         // 坐标有效但 EXIF 无时间：补一次 XMP 时间，读不到也不影响打点
         Some(pair) => {
-            if let Some(xmp) = read_xmp_prefix(path) {
+            if let Some(xmp) = read_xmp() {
                 datetime = datetime.or(xmp.create_date);
             }
             pair
         }
         None => {
-            let xmp = read_xmp_prefix(path)?;
+            let xmp = read_xmp()?;
             datetime = datetime.or_else(|| xmp.create_date.clone());
             parse_gps_pair(xmp.gps.as_deref()?)?
         }
@@ -497,5 +539,38 @@ mod position_tests {
         .unwrap();
         assert!(read_position(&p).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn read_position_from_bytes_matches_path_on_real_sample() {
+        let path = sample_path();
+        let bytes = std::fs::read(&path).expect("读取样本");
+        let from_path = read_position(&path).expect("路径应读到定位");
+        let from_bytes = read_position_from_bytes(&bytes).expect("字节应读到定位");
+        assert!((from_bytes.lat - from_path.lat).abs() < 1e-9);
+        assert!((from_bytes.lon - from_path.lon).abs() < 1e-9);
+        assert_eq!(from_bytes.datetime, from_path.datetime);
+    }
+
+    /// 字节解析入口与路径入口结果一致，且 meta 中的 GPS 可还原为数值坐标
+    #[test]
+    fn load_from_bytes_matches_path_and_meta_position() {
+        let path = sample_path();
+        let path_str = path.to_str().expect("样本路径 utf8");
+        let bytes = std::fs::read(&path).expect("读取样本");
+        let from_path = load_rad_image(path_str, None).expect("路径解析");
+        let from_bytes = load_rad_image_from_bytes(path_str, &bytes, None).expect("字节解析");
+
+        assert_eq!(from_bytes.meta.source_kind, from_path.meta.source_kind);
+        assert_eq!(
+            (from_bytes.width, from_bytes.height),
+            (from_path.width, from_path.height)
+        );
+        assert_eq!(from_bytes.temps.len(), from_path.temps.len());
+
+        let pos = position_from_meta(&from_bytes.meta).expect("meta 应含 GPS");
+        let raw_pos = read_position_from_bytes(&bytes).expect("字节应含 GPS");
+        assert!((pos.lat - raw_pos.lat).abs() < 1e-6, "lat={}", pos.lat);
+        assert!((pos.lon - raw_pos.lon).abs() < 1e-6, "lon={}", pos.lon);
     }
 }

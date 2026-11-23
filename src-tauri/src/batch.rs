@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::diagnosis;
 use crate::error::AppResult;
 use crate::settings::Thresholds;
-use crate::thermal::{load_rad_image, read_position};
+use crate::thermal::{load_rad_image_from_bytes, position_from_meta, read_position_from_bytes};
 
 /// 批量结果条目
 #[derive(Debug, Serialize, Clone)]
@@ -31,9 +31,12 @@ pub struct BatchItem {
 /// 批量汇总
 #[derive(Debug, Serialize)]
 pub struct BatchSummary {
+    /// 扫描到的候选 JPG 总数（含被忽略项）
     pub total: usize,
+    /// 成功解析的红外原图数量
     pub ok: usize,
-    pub failed: usize,
+    /// 因无法解析出辐射数据而被忽略的非红外照片数量
+    pub skipped: usize,
     pub items: Vec<BatchItem>,
 }
 
@@ -64,11 +67,16 @@ pub fn scan_folder(dir: &Path, recursive: bool) -> AppResult<Vec<PathBuf>> {
     Ok(out)
 }
 
+/// 进度事件步长：约 1% 一次（最多约 200 次），小目录至少每张一次
+pub fn progress_stride(total: usize) -> usize {
+    (total / 200).max(1)
+}
+
 /// 解析单张并按阈值定级（失败时返回带 error 的条目）
+///
+/// 文件只读取一次：同一份字节用于热数据解析与定位信息兜底，避免批量场景重复磁盘 IO。
 pub fn parse_one(path: &Path, thresholds: &Thresholds) -> BatchItem {
-    // 定位信息独立于温度解析：普通预览图 / 损坏文件解析失败时仍可打点
-    let pos = read_position(path);
-    let item = BatchItem {
+    let mut item = BatchItem {
         path: path.to_string_lossy().to_string(),
         file_name: path
             .file_name()
@@ -79,25 +87,34 @@ pub fn parse_one(path: &Path, thresholds: &Thresholds) -> BatchItem {
         delta_t: 0.0,
         level: 0,
         error: None,
-        lat: pos.as_ref().map(|p| p.lat),
-        lon: pos.as_ref().map(|p| p.lon),
-        datetime: pos.and_then(|p| p.datetime),
+        lat: None,
+        lon: None,
+        datetime: None,
     };
-    match load_rad_image(&path.to_string_lossy(), None) {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            item.error = Some(format!("读取文件失败：{e}"));
+            return item;
+        }
+    };
+    match load_rad_image_from_bytes(&item.path, &bytes, None) {
         Ok(img) => {
-            let mut max = f64::MIN;
-            let mut min = f64::MAX;
-            for t in &img.temps {
-                if t.is_finite() {
-                    max = max.max(*t as f64);
-                    min = min.min(*t as f64);
-                }
+            // 定位信息优先复用已解析的 meta（不再重复扫描 EXIF / XMP）；
+            // meta 坐标无效时回退字节解析，保留「EXIF 占位坐标 + XMP 有效坐标」场景
+            let pos = position_from_meta(&img.meta)
+                .or_else(|| read_position_from_bytes(&bytes));
+            if let Some(pos) = pos {
+                item.lat = Some(pos.lat);
+                item.lon = Some(pos.lon);
+                item.datetime = pos.datetime;
             }
+            // 极值复用 load 阶段已算好的范围，避免再遍历一遍温度矩阵
+            let max = img.meta.temp_max;
+            let min = img.meta.temp_min;
             if !max.is_finite() {
-                return BatchItem {
-                    error: Some("图像内无有效温度数据".to_string()),
-                    ..item
-                };
+                item.error = Some("图像内无有效温度数据".to_string());
+                return item;
             }
             let stats = crate::roi::RoiStats {
                 max,
@@ -107,19 +124,45 @@ pub fn parse_one(path: &Path, thresholds: &Thresholds) -> BatchItem {
                 count: img.temps.len(),
             };
             let verdict = diagnosis::verdict(&stats, thresholds);
-            BatchItem {
-                max,
-                min,
-                delta_t: max - min,
-                level: verdict.level,
-                ..item
-            }
+            item.max = max;
+            item.min = min;
+            item.delta_t = max - min;
+            item.level = verdict.level;
+            item
         }
-        Err(e) => BatchItem {
-            error: Some(e),
-            ..item
-        },
+        Err(e) => {
+            // 定位信息独立于温度解析：普通预览图 / 损坏文件解析失败时仍可打点
+            if let Some(pos) = read_position_from_bytes(&bytes) {
+                item.lat = Some(pos.lat);
+                item.lon = Some(pos.lon);
+                item.datetime = pos.datetime;
+            }
+            item.error = Some(e);
+            item
+        }
     }
+}
+
+/// 顺序解析候选 JPG，跳过无法解析出辐射数据的非红外照片。
+/// `on_progress(done, &item)` 在每个候选处理完后调用（被忽略项也会回调，便于进度条走满）。
+/// 返回（成功条目, 被忽略数量）。
+pub fn parse_radiometric<F: FnMut(usize, &BatchItem)>(
+    files: &[PathBuf],
+    thresholds: &Thresholds,
+    mut on_progress: F,
+) -> (Vec<BatchItem>, usize) {
+    let mut items = Vec::new();
+    let mut skipped = 0usize;
+    for (i, path) in files.iter().enumerate() {
+        let item = parse_one(path, thresholds);
+        on_progress(i + 1, &item);
+        if item.error.is_none() {
+            items.push(item);
+        } else {
+            skipped += 1;
+        }
+    }
+    (items, skipped)
 }
 
 #[cfg(test)]
@@ -188,6 +231,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_radiometric_skips_non_rad() {
+        let dir = scratch("batch_filter");
+        std::fs::write(dir.join("fake.jpg"), b"not a jpeg").unwrap();
+        let files = scan_folder(&dir, false).unwrap();
+        let (items, skipped) = parse_radiometric(&files, &Thresholds::default(), |_, _| {});
+        assert!(items.is_empty(), "非红外照片不应进入结果");
+        assert_eq!(skipped, 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn parse_one_without_gps_leaves_null_coords() {
         let dir = scratch("batch_no_gps");
         let p = dir.join("fake.jpg");
@@ -198,5 +252,14 @@ mod tests {
         assert_eq!(item.lon, None);
         assert_eq!(item.datetime, None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn progress_stride_caps_event_count() {
+        assert_eq!(progress_stride(0), 1);
+        assert_eq!(progress_stride(10), 1);
+        assert_eq!(progress_stride(199), 1);
+        assert_eq!(progress_stride(200), 1);
+        assert_eq!(progress_stride(5000), 25);
     }
 }

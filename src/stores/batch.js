@@ -27,7 +27,7 @@ export const useBatchStore = defineStore('batch', () => {
     try {
       const s = await api.batchParse(dir, recursive)
       items.value = s.items
-      summary.value = { total: s.total, ok: s.ok, failed: s.failed }
+      summary.value = { total: s.total, ok: s.ok, skipped: s.skipped }
     } catch (e) {
       error.value = typeof e === 'string' ? e : e?.message || String(e)
     } finally {

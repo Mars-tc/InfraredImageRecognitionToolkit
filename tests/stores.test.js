@@ -280,6 +280,59 @@ test('ROI：统计回填极值坐标，旧响应保持兼容', async () => {
   assert.equal(roi.stats.max_pos, undefined)
 })
 
+test('ROI：点测温添加/删除/清空，selectedRoi 跟随选中', () => {
+  const store = useRoiStore()
+  const a = store.addSpot(10.7, 20.2)
+  assert.deepEqual({ x: a.x, y: a.y }, { x: 10, y: 20 })
+  store.addSpot(1, 2)
+  assert.equal(store.spots.length, 2)
+
+  store.removeSpot(a.id)
+  assert.equal(store.spots.length, 1)
+
+  const roi = store.addRoi('rect', { kind: 'rect' })
+  assert.equal(store.selectedRoi.id, roi.id)
+  store.clearAll()
+  assert.equal(store.spots.length, 0)
+  assert.equal(store.selectedRoi, null)
+})
+
+test('ROI：线段额外拉取温度剖面与直方图，矩形不请求剖面', async () => {
+  mock.setHandler((msg) => {
+    if (msg.cmd === 'roi_stats') {
+      return {
+        max: 30, min: 25, avg: 27, delta_t: 5, count: 4, verdict: null,
+        histogram: { min: 25, max: 30, counts: [2, 2] }
+      }
+    }
+    if (msg.cmd === 'line_profile') return [25, 26, 27, 28]
+    return null
+  })
+  const store = useRoiStore()
+  const line = store.addRoi('line', { kind: 'line', points: [[0, 0], [3, 0]] })
+  await flush()
+  await flush()
+  assert.deepEqual(line.profile, [25, 26, 27, 28])
+  assert.deepEqual({ ...line.histogram }, { min: 25, max: 30, counts: [2, 2] })
+  assert.equal(mock.calls.filter((c) => c.cmd === 'line_profile').length, 1)
+
+  store.addRoi('rect', { kind: 'rect' })
+  await flush()
+  await flush()
+  assert.equal(mock.calls.filter((c) => c.cmd === 'line_profile').length, 1)
+})
+
+test('图片 store：超温高亮开关与阈值', () => {
+  const store = useImageStore()
+  assert.equal(store.isothermOn, false)
+  assert.equal(store.isothermThreshold, 70)
+  store.setIsotherm(true, 55)
+  assert.equal(store.isothermOn, true)
+  assert.equal(store.isothermThreshold, 55)
+  store.toggleIsotherm()
+  assert.equal(store.isothermOn, false)
+})
+
 test('视图 store：openInAnalysis 加载原图并切回分析页', async () => {
   const meta = { width: 2, height: 2, temp_min: 10, temp_max: 13 }
   const bytes = new Uint8Array(new Float32Array([10, 11, 12, 13]).buffer)

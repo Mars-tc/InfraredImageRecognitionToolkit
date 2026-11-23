@@ -65,3 +65,24 @@ export function buildTempMarks({ extrema = null, rois = [], selectedId = null } 
 
   return marks
 }
+
+/**
+ * 点测温标注：坐标取自 spot，温度由 tempAt 实时计算（发射率/距离修正后同步）。
+ * 画布覆盖层与导出标注图共用该结果。
+ */
+export function buildSpotMarks({ spots = [], tempAt } = {}) {
+  const read = typeof tempAt === 'function' ? tempAt : () => null
+  return spots.map((s, i) => {
+    const temp = read(s.x, s.y)
+    const label = `S${i + 1}`
+    return makeMark({
+      x: s.x,
+      y: s.y,
+      temp,
+      label,
+      ascii: `${label} ${asciiTemp(temp)}`,
+      scope: 'spot',
+      hot: true
+    })
+  })
+}

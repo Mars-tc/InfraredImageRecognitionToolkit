@@ -6,7 +6,7 @@ import { DEFECT_LEVELS, levelInfo } from '../utils/defects.js'
 import { fmtTemp, fmtDelta } from '../utils/format.js'
 import {
   toPoints, computeBounds, createProjection, projectPoint, projectPoints,
-  fitTransform, zoomAt, gridTicks, formatCoord
+  clusterPoints, fitTransform, zoomAt, gridTicks, formatCoord
 } from '../utils/mapProjection.js'
 import { getThumbnail } from '../api/tauri.js'
 import { useViewStore } from '../stores/view.js'
@@ -26,6 +26,8 @@ const thumbnailError = ref('')
 const thumbCache = new Map()
 let requestSeq = 0
 let dragStart = null
+let rafId = 0
+let pendingTransform = null
 let observer = null
 let updateSize = null
 
@@ -35,6 +37,11 @@ const bounds = computed(() => computeBounds(points.value))
 const proj = computed(() => createProjection(bounds.value, size.value.width, size.value.height))
 const projected = computed(() =>
   projectPoints(points.value, bounds.value, size.value.width, size.value.height)
+)
+// 屏幕像素网格聚合：点位多时把重叠点合并，避免上万个 SVG 节点；
+// cell 随缩放变化，平移（仅 tx/ty）不会触发重新聚合。
+const markerPoints = computed(() =>
+  clusterPoints(projected.value, 24 / transform.value.scale)
 )
 const ticks = computed(() => gridTicks(bounds.value))
 const latLines = computed(() => proj.value
@@ -109,6 +116,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   observer?.disconnect()
   if (updateSize) window.removeEventListener('resize', updateSize)
+  if (rafId) cancelAnimationFrame(rafId)
 })
 
 function localPoint(e) {
@@ -129,9 +137,29 @@ function onMouseDown(e) {
 function onMouseMove(e) {
   if (!dragging.value || !dragStart) return
   const { x, y } = localPoint(e)
-  transform.value = { ...transform.value, tx: dragStart.tx + x - dragStart.x, ty: dragStart.ty + y - dragStart.y }
+  // 合帧：一帧只提交一次 transform，避免 mousemove 高频触发整棵 SVG patch
+  pendingTransform = {
+    ...transform.value,
+    tx: dragStart.tx + x - dragStart.x,
+    ty: dragStart.ty + y - dragStart.y
+  }
+  if (rafId) return
+  rafId = requestAnimationFrame(() => {
+    rafId = 0
+    if (pendingTransform) transform.value = pendingTransform
+    pendingTransform = null
+  })
 }
 function onMouseUp() {
+  if (rafId) {
+    cancelAnimationFrame(rafId)
+    rafId = 0
+  }
+  // 松手时把尚未提交的最后一帧落地，避免位置回跳
+  if (pendingTransform) {
+    transform.value = pendingTransform
+    pendingTransform = null
+  }
   dragging.value = false
   dragStart = null
 }
@@ -169,11 +197,20 @@ async function openInAnalysis() {
         <line v-for="l in lonLines" :key="`lon-${l.v}`" class="grid-line" :y1="0" :y2="size.height" :x1="l.x" :x2="l.x" vector-effect="non-scaling-stroke" />
         <text v-for="l in latLines" :key="`lat-t-${l.v}`" class="grid-label" :x="8 / transform.scale" :y="l.y - 6 / transform.scale" :font-size="fontSize">{{ l.label }}</text>
         <text v-for="l in lonLines" :key="`lon-t-${l.v}`" class="grid-label" :x="l.x + 6 / transform.scale" :y="size.height - 10 / transform.scale" :font-size="fontSize">{{ l.label }}</text>
-        <g v-for="p in projected" :key="p.id" class="marker" @click.stop="selectedId = p.id" @mouseenter="hoverId = p.id" @mouseleave="hoverId = null">
+        <g
+          v-for="p in markerPoints"
+          :key="p.id"
+          v-memo="[p.x, p.y, p.count, radius, hoverId === p.id, selectedId === p.id]"
+          class="marker"
+          @click.stop="selectedId = p.id"
+          @mouseenter="hoverId = p.id"
+          @mouseleave="hoverId = null"
+        >
           <circle v-if="p.id === selectedId" class="pulse-ring" :cx="p.x" :cy="p.y" :r="radius * 2.2" :stroke="markerColor(p.item)" vector-effect="non-scaling-stroke" />
           <circle v-if="p.item.error" class="fail-ring" :cx="p.x" :cy="p.y" :r="radius * 1.7" vector-effect="non-scaling-stroke" />
-          <circle class="dot" :cx="p.x" :cy="p.y" :r="radius * (hoverId === p.id ? 1.35 : 1)" :fill="markerColor(p.item)" vector-effect="non-scaling-stroke" />
-          <title>{{ p.item.file_name || p.id }}</title>
+          <circle class="dot" :cx="p.x" :cy="p.y" :r="radius * (hoverId === p.id ? 1.35 : 1) * (p.count > 1 ? 1.5 : 1)" :fill="markerColor(p.item)" vector-effect="non-scaling-stroke" />
+          <text v-if="p.count > 1" class="cluster-count" :x="p.x" :y="p.y" :font-size="fontSize * 0.9" text-anchor="middle" dominant-baseline="central">{{ p.count }}</text>
+          <title>{{ p.count > 1 ? `${p.count} 张照片` : (p.item.file_name || p.id) }}</title>
         </g>
       </g>
     </svg>
@@ -229,6 +266,7 @@ async function openInAnalysis() {
 .grid-label { fill: rgba(190,208,228,.55); font-family: inherit; font-variant-numeric: tabular-nums; }
 .marker { cursor: pointer; }
 .dot { stroke: rgba(255,255,255,.85); stroke-width: 1.5; transition: r .15s ease; filter: drop-shadow(0 0 5px rgba(255,255,255,.35)); }
+.cluster-count { fill: #fff; font-weight: 600; pointer-events: none; }
 .marker:hover .dot { filter: drop-shadow(0 0 9px rgba(255,255,255,.75)); }
 .fail-ring { fill: none; stroke: #a8b3c1; stroke-width: 1; stroke-dasharray: 3 2; }
 .pulse-ring { fill: none; stroke-width: 1.5; opacity: .8; transform-box: fill-box; transform-origin: center; animation: pulse 1.8s ease-out infinite; }

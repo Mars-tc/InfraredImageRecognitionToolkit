@@ -25,11 +25,12 @@ const mocked = new Set(
   [...e2eSrc.matchAll(/cmd === '([a-z_]+)'/g)].map((m) => m[1])
 )
 const wrapped = new Set(
-  [...apiSrc.matchAll(/invoke\('([a-z_]+)'/g)].map((m) => m[1])
+  [...apiSrc.matchAll(/(?:safeInvoke|invoke)\('([a-z_]+)'/g)].map((m) => m[1])
 )
 
-// 19 → +image_extrema（画布温度标注）→ +get_thumbnail（离线地图缩略图）
-assert.equal(commands.length, 21, 'main.rs 注册命令数变化，请同步更新核查脚本')
+// 19 → +image_extrema → +get_thumbnail → +line_profile / +ledger_add_many
+// → +export_ledger_csv / +import_ledger_csv
+assert.equal(commands.length, 25, 'main.rs 注册命令数变化，请同步更新核查脚本')
 for (const cmd of commands) {
   assert.ok(wrapped.has(cmd), `前端缺少命令封装: ${cmd}`)
 }

@@ -16,8 +16,8 @@ const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 /// 缩略图长边默认值
 pub const DEFAULT_MAX_EDGE: u32 = 320;
 
-/// 把本地 JPG 等比缩到长边不超过 `max_edge`，返回 JPEG 字节。
-fn encode_thumbnail(path: &Path, max_edge: u32) -> AppResult<Vec<u8>> {
+/// 读取并等比缩放本地 JPG（长边不超过 `max_edge`）。
+fn load_thumbnail(path: &Path, max_edge: u32) -> AppResult<image::DynamicImage> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -41,12 +41,27 @@ fn encode_thumbnail(path: &Path, max_edge: u32) -> AppResult<Vec<u8>> {
     let edge = max_edge.clamp(64, 1024);
     let img = image::open(path)
         .map_err(|e| format!("缩略图解码失败（{}）：{}", file_name(path), e))?;
-    let rgb = img.thumbnail(edge, edge).to_rgb8();
+    Ok(img.thumbnail(edge, edge))
+}
+
+/// 把本地 JPG 等比缩到长边不超过 `max_edge`，返回 JPEG 字节。
+fn encode_thumbnail(path: &Path, max_edge: u32) -> AppResult<Vec<u8>> {
+    let rgb = load_thumbnail(path, max_edge)?.to_rgb8();
     let mut cursor = Cursor::new(Vec::new());
     image::DynamicImage::ImageRgb8(rgb)
         .write_to(&mut cursor, ImageFormat::Jpeg)
         .map_err(|e| format!("缩略图编码失败（{}）：{}", file_name(path), e))?;
     Ok(cursor.into_inner())
+}
+
+/// 把本地 JPG 等比缩到长边不超过 `max_edge`，返回 PNG 字节与像素尺寸（Word 报告内嵌用）。
+pub fn encode_thumbnail_png(path: &Path, max_edge: u32) -> AppResult<(Vec<u8>, u32, u32)> {
+    let img = load_thumbnail(path, max_edge)?;
+    let (w, h) = (img.width(), img.height());
+    let mut cursor = Cursor::new(Vec::new());
+    img.write_to(&mut cursor, ImageFormat::Png)
+        .map_err(|e| format!("缩略图编码失败（{}）：{}", file_name(path), e))?;
+    Ok((cursor.into_inner(), w, h))
 }
 
 /// 返回可直接赋给 `<img src>` 的 data URL；解码失败时由前端降级为占位图。
@@ -145,6 +160,17 @@ mod tests {
             .expect("未找到御3T样本（设置 IR_SAMPLE_JPG 指向真实辐射原图）");
         let url = make_thumbnail(sample.to_str().unwrap(), 320).expect("真实辐射原图应能生成缩略图");
         assert!(url.starts_with("data:image/jpeg;base64,"));
+    }
+
+    #[test]
+    fn png_thumbnail_returns_dimensions() {
+        let dir = scratch("png");
+        let p = dir.join("a.jpg");
+        write_test_image(&p, 640, 320);
+        let (bytes, w, h) = encode_thumbnail_png(&p, 320).expect("应生成 PNG 缩略图");
+        assert_eq!((w, h), (320, 160));
+        assert!(bytes.starts_with(&[137, 80, 78, 71]));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

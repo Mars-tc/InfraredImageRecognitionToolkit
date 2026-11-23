@@ -40,6 +40,8 @@ pub mod diagnosis;
 pub mod export;
 #[path = "../../src/db.rs"]
 pub mod db;
+#[path = "../../src/ledger_csv.rs"]
+pub mod ledger_csv;
 #[path = "../../src/report.rs"]
 pub mod report;
 #[path = "../../src/batch.rs"]
@@ -121,6 +123,7 @@ mod pipeline_tests {
             "测试员",
             "2026-11-04",
             "测试班组",
+            false,
         )
         .expect("导出报告");
         let bytes = std::fs::read(&docx).expect("读取报告");

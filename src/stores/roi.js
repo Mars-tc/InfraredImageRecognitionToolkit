@@ -1,6 +1,6 @@
 // ROI 状态：绘制工具、ROI 列表、后端统计与定级结果、三相比对告警
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import * as api from '../api/tauri.js'
 
 let seq = 0
@@ -14,6 +14,31 @@ export const useRoiStore = defineStore('roi', () => {
   const selectedId = ref(null)
   const drawing = ref(false) // 是否正在绘制（poly/line 未完成）
   const phaseAlert = ref(null) // F11 三相比对告警
+  const spots = ref([]) // 点测温标记：{ id, x, y }，温度展示时实时计算
+
+  const selectedRoi = computed(
+    () => rois.value.find((r) => r.id === selectedId.value) || null
+  )
+
+  let spotSeq = 0
+  function addSpot(x, y) {
+    const spot = {
+      id: `spot_${Date.now().toString(36)}_${spotSeq++}`,
+      x: Math.floor(x),
+      y: Math.floor(y)
+    }
+    spots.value.push(spot)
+    return spot
+  }
+
+  function removeSpot(id) {
+    const i = spots.value.findIndex((s) => s.id === id)
+    if (i >= 0) spots.value.splice(i, 1)
+  }
+
+  function clearSpots() {
+    spots.value = []
+  }
 
   function setTool(tool) {
     activeTool.value = tool
@@ -50,6 +75,7 @@ export const useRoiStore = defineStore('roi', () => {
     selectedId.value = null
     drawing.value = false
     phaseAlert.value = null
+    clearSpots()
   }
 
   function selectRoi(id) {
@@ -91,11 +117,23 @@ export const useRoiStore = defineStore('roi', () => {
       if (r.extrema?.min_pos) stats.min_pos = r.extrema.min_pos
       roi.stats = stats
       roi.verdict = r.verdict || null
+      roi.histogram = r.histogram || null
       roi.error = ''
+      // 线段额外拉取沿路径的温度剖面
+      if (roi.kind === 'line') {
+        try {
+          const profile = await api.lineProfile(roi.shape)
+          if (isLatest()) roi.profile = profile
+        } catch (e) {
+          if (isLatest()) roi.profile = null
+        }
+      }
     } catch (e) {
       if (!isLatest()) return
       roi.stats = null
       roi.verdict = null
+      roi.histogram = null
+      roi.profile = null
       roi.error = typeof e === 'string' ? e : e?.message || String(e)
     }
     comparePhases()
@@ -122,8 +160,9 @@ export const useRoiStore = defineStore('roi', () => {
   }
 
   return {
-    rois, activeTool, selectedId, drawing, phaseAlert,
+    rois, activeTool, selectedId, drawing, phaseAlert, spots, selectedRoi,
     setTool, addRoi, removeRoi, clearAll, selectRoi, updateShape, setPhase,
+    addSpot, removeSpot, clearSpots,
     refreshStats, refreshAll, comparePhases
   }
 })

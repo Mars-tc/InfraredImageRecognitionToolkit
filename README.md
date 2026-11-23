@@ -5,7 +5,7 @@
 > 技术栈：Tauri 1.x + Rust（`thermal` crate 解析 FLIR FFF 段 R-JPEG、大疆 XMP/EXIF 适配、`kamadak-exif` 读取 GPS、`image` 生成标注 PNG / 缩略图）+ Vue 3 + Fabric.js + Element Plus + rusqlite + docx-rs。
 > 目标平台：统信 UOS20（Debian10）内网离线环境；开发期可在 Windows（WebView2）运行。
 
-## 功能清单（对照开发文档 F1–F16）
+## 功能清单（对照开发文档 F1–F16、F18–F21）
 
 | 编号 | 功能 | 入口 |
 | --- | --- | --- |
@@ -24,10 +24,14 @@
 | F14 | 批量文件夹遍历解析 + 进度 + 结果导出；解析结果按 GPS 展示在纯离线点位地图，可查看缩略图并跳转分析 | 「批量处理」页「表格 / 地图」视图 |
 | F15 | SQLite 巡检台账（增删改查/筛选/统计） | 「巡检台账」页 |
 | F16 | 国网风格 Word 缺陷报告 | 台账页勾选记录 →「生成缺陷报告」 |
+| F18 | 超温区域高亮、点测温标记、线段温度剖面、ROI 温度直方图 | 「调色板」超温开关 / 画布「点测温」/ 选中 ROI 下方图表 |
+| F19 | 分析结果一键存入台账、批量解析结果批量入库 | 分析页「存入台账」/ 批量页「批量入库」 |
+| F20 | 台账 CSV 导入 / 导出（Excel 可直接编辑） | 台账页「导出 CSV / 导入 CSV」 |
+| F21 | Word 报告可选附缺陷图片（原图存在时自动嵌入） | 台账勾选 → 报告对话框「附缺陷图片」 |
 
 > F13（MSX 融合）与 F17（AI 识别）按计划留待后续；F9 的交付构建流水线已就绪，目标机安装验收待补。
 >
-> 画布工具栏「温度标注」可一键显隐全图与当前选中 ROI 的最高温/最低温（最多 4 处），F8 导出标注图与画布所见一致；离线点位地图为纯 SVG 绘制，无底图、无外部瓦片服务，点位缩略图按需懒加载（仅 JPG、单文件 ≤64MB）。
+> 画布工具栏「温度标注」可一键显隐全图与当前选中 ROI 的最高温/最低温（最多 4 处），F8 导出标注图与画布所见一致；点测温标记会随标注图一并导出，超温高亮仅用于画布辅助查看。离线点位地图为纯 SVG 绘制，无底图、无外部瓦片服务，点位缩略图按需懒加载（仅 JPG、单文件 ≤64MB）。
 
 ## 前置条件：必须是辐射原图
 
@@ -103,16 +107,18 @@ UOS20 内网机的安装包由 **GitHub Actions** 在 Debian 10 容器中构建�
 
 ```
 ├── src/                    # Vue3 前端
-│   ├── api/tauri.js        # 21 个 Tauri IPC 命令封装
+│   ├── api/tauri.js        # 25 个 Tauri IPC 命令封装
 │   ├── stores/             # pinia（6 个）：image/roi/batch/ledger/settings/view
 │   ├── utils/              # palettes（调色板 LUT）/ defects / format /
-│   │                       # mapProjection（GPS 投影）/ roiShape（形状换算）/ tempMarks（极值标注）
+│   │                       # mapProjection（GPS 投影）/ roiShape（形状换算）/ tempMarks（极值/测点标注）/
+│   │                       # ledgerDraft（入库草稿）
 │   ├── components/         # AnalysisView/CanvasView/ColorScale/RoiPanel/MetaPanel/
-│   │                       # BatchPanel/MapView/LedgerPanel/ReportDialog/SettingsDialog
+│   │                       # BatchPanel/MapView/LedgerPanel/ReportDialog/SettingsDialog/
+│   │                       # RoiCharts/LedgerSaveDialog/BatchLedgerDialog
 │   └── App.vue             # 图像分析 / 批量处理 / 巡检台账 三视图
 ├── src-tauri/              # Rust 后端
 │   ├── src/
-│   │   ├── main.rs         # 命令注册（21 个）+ 配置初始化
+│   │   ├── main.rs         # 命令注册（25 个）+ 配置初始化
 │   │   ├── lib.rs          # 模块导出（主 crate 与 backend-tests 共用）
 │   │   ├── commands.rs     # Tauri command 实现
 │   │   ├── thermal.rs      # R-JPEG 解析 + EXIF/XMP（thermal crate + 大疆适配）
@@ -122,8 +128,9 @@ UOS20 内网机的安装包由 **GitHub Actions** 在 Debian 10 容器中构建�
 │   │   ├── diagnosis.rs    # 四级判定 + 三相 ΔT（F11/F12）
 │   │   ├── export.rs       # CSV / 标注 PNG（含温度极值标注，F8）
 │   │   ├── thumbnail.rs    # 红外原图缩略图 data URL（F14 点位弹窗）
-│   │   ├── db.rs           # SQLite 台账（F15）
-│   │   ├── report.rs       # docx 缺陷报告（F16）
+│   │   ├── db.rs           # SQLite 台账（F15，含批量入库）
+│   │   ├── ledger_csv.rs   # 台账 CSV 导入 / 导出（F20）
+│   │   ├── report.rs       # docx 缺陷报告（F16，可附缺陷图片）
 │   │   ├── batch.rs        # 文件夹批量解析（F14）
 │   │   ├── settings.rs     # 阈值持久化（F12）
 │   │   ├── utils.rs        # base64 / 等级名等通用函数
@@ -135,7 +142,7 @@ UOS20 内网机的安装包由 **GitHub Actions** 在 Debian 10 容器中构建�
 ├── scripts/                # run-tests.mjs（统一测试入口）/ build-local.mjs（本机构建入口）/
 │                           # check-e2e.mjs（IPC 契约核查）/ verify-sample.mjs（样本基线）/
 │                           # e2e-cdp.mjs（mock 验收）等
-├── tests/                  # 6 个前端逻辑测试文件
+├── tests/                  # 7 个前端逻辑测试文件
 ├── packaging/README.md     # 交付构建与内网安装指引
 ├── .github/workflows/      # build-uos20.yml（UOS20 交付构建流水线）
 └── e2e/                    # sample.json（真实样本温度矩阵）/ mock-app.png
@@ -155,10 +162,10 @@ pnpm test:e2e             # E2E 现状核查
 
 | 通道 | 实际命令 | 覆盖 |
 | --- | --- | --- |
-| Rust | `cargo test --offline`（`src-tauri/backend-tests`） | 50 项：R-JPEG 解析 / 测温 / ROI / 定级 / 台账 / 导出 / 批量 / 阈值 / 缩略图 / 极值标注，含两张真实辐射原图 |
-| 前端 | `node --test tests/*.test.js` | 45 项（6 个测试文件）：调色板 LUT、缺陷等级、格式化、21 个 IPC 命令契约、6 个 pinia store，以及 GPS 投影 / ROI 形状 / 温度极值标注 / 视图跳转 |
+| Rust | `cargo test --offline`（`src-tauri/backend-tests`） | 62 项：R-JPEG 解析 / 测温 / ROI / 定级 / 台账 / 导出 / 批量 / 阈值 / 缩略图 / 极值标注 / 直方图 / 线段剖面 / 台账 CSV / 报告配图，含两张真实辐射原图 |
+| 前端 | `node --test tests/*.test.js` | 54 项（7 个测试文件）：调色板 LUT、缺陷等级、格式化、25 个 IPC 命令契约、6 个 pinia store，以及 GPS 投影 / ROI 形状 / 温度极值 / 点测温标注 / 入库草稿 / 视图跳转 |
 | 样本基线 | `node scripts/verify-sample.mjs` | `e2e/sample.json` 的 15 字段、640×512 矩阵、ε / 距离 / 温度量程 |
-| E2E | `node scripts/check-e2e.mjs` | 静态核对 21 个注册命令 / 21 个前端封装 / 9 个 mock 分支 |
+| E2E | `node scripts/check-e2e.mjs` | 静态核对 25 个注册命令 / 25 个前端封装 / 13 个 mock 分支 |
 
 ### 为什么后端测试放在 `src-tauri/backend-tests/`
 
@@ -183,6 +190,12 @@ pnpm test:e2e             # E2E 现状核查
 - Rust 50/50、前端 45/45、样本基线校验、E2E 静态核查（21 个注册命令 / 21 个前端封装 / 9 个 mock 分支）通过。
 - 新增用例覆盖：离线 GPS 投影与坐标过滤、ROI 形状坐标换算、温度极值标注、缩略图（扩展名 / 文件大小 / 长边钳制 / 真实 R-JPEG 可解码）、带温度标注的 PNG 导出、全图极值缓存与发射率修正后重取、视图 store 跳转分析。
 - `scripts/e2e-cdp.mjs` 的 CDP 图形验收仍为环境受限项（本机无 Chrome/Chromium），设置 `CHROME_PATH` 并先启动 `pnpm dev` 后可在有浏览器的机器复现。
+
+### 本次扩展复核（2026-11-23）
+
+- Rust 62/62、前端 54/54、样本基线、E2E 静态核查（25 个注册命令 / 25 个前端封装 / 13 个 mock 分支）通过，`vite build` 通过。
+- 新增能力：超温区域高亮、点测温（导出标注图同步）、线段温度剖面、ROI 直方图、分析页/批量页入库、台账 CSV 往返、Word 报告附缺陷图片。
+- 新增用例覆盖：线段剖面端点与长度、直方图计数与均匀温度、`insert_many`、CSV 引号/逗号/换行往返、报告内嵌 `word/media` 且图片缺失降级、测点标注与入库草稿纯函数。
 
 ## 已知事项
 

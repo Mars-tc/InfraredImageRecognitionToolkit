@@ -78,6 +78,25 @@ function autoScale() {
       <el-button size="small" @click="autoScale">自动</el-button>
     </div>
     <p class="scale-tip">超出上下限的温度将钳位到端点色</p>
+
+    <div class="iso-row">
+      <span class="iso-label">超温高亮</span>
+      <el-switch v-model="imageStore.isothermOn" size="small" />
+      <span class="iso-ge">≥</span>
+      <el-input-number
+        v-model="imageStore.isothermThreshold"
+        size="small"
+        :min="-50"
+        :max="500"
+        :step="1"
+        :precision="1"
+        :controls="false"
+        :disabled="!imageStore.isothermOn"
+        style="width: 76px"
+      />
+      <span class="iso-unit">℃</span>
+    </div>
+    <p class="scale-tip">超温区域在画布上叠加红色高亮，不进入导出图</p>
   </div>
 </template>
 
@@ -132,6 +151,26 @@ function autoScale() {
 .scale-tip {
   margin: 0;
   font-size: 11px;
+  color: var(--ip-text-muted);
+}
+
+.iso-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--ip-border);
+  font-size: 12px;
+  color: var(--ip-text-secondary);
+}
+
+.iso-label {
+  font-size: 12px;
+  color: var(--ip-text-secondary);
+}
+
+.iso-ge,
+.iso-unit {
   color: var(--ip-text-muted);
 }
 </style>

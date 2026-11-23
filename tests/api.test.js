@@ -35,6 +35,7 @@ test('IPC 封装的命令名与参数映射（对照 main.rs）', async () => {
     [() => api.setEmissivity(0.9), 'set_emissivity', { value: 0.9 }],
     [() => api.setDistance(5), 'set_distance', { value: 5 }],
     [() => api.roiStats({ kind: 'rect' }), 'roi_stats', { shape: { kind: 'rect' } }],
+    [() => api.lineProfile({ kind: 'line', points: [] }), 'line_profile', { shape: { kind: 'line', points: [] } }],
     [() => api.phaseCompare([['A', 50]]), 'phase_compare', { entries: [['A', 50]] }],
     [() => api.batchParse('/tmp/dir'), 'batch_parse', { dir: '/tmp/dir', recursive: true }],
     [() => api.getThumbnail('/tmp/a.jpg'), 'get_thumbnail', { path: '/tmp/a.jpg' }],
@@ -51,13 +52,21 @@ test('IPC 封装的命令名与参数映射（对照 main.rs）', async () => {
       }
     ],
     [() => api.ledgerAdd({ tower_no: 'T1' }), 'ledger_add', { input: { tower_no: 'T1' } }],
+    [() => api.ledgerAddMany([{ tower_no: 'T1' }]), 'ledger_add_many', { inputs: [{ tower_no: 'T1' }] }],
+    [() => api.exportLedgerCsv('/tmp/l.csv'), 'export_ledger_csv', { path: '/tmp/l.csv' }],
+    [() => api.importLedgerCsv('/tmp/l.csv'), 'import_ledger_csv', { path: '/tmp/l.csv' }],
     [() => api.ledgerQuery(), 'ledger_query', { keyword: '', level: null, limit: 200, offset: 0 }],
     [() => api.ledgerUpdate(3, { tower_no: 'T2' }), 'ledger_update', { id: 3, input: { tower_no: 'T2' } }],
     [() => api.ledgerDelete(3), 'ledger_delete', { id: 3 }],
     [
       () => api.exportReport([1], '/tmp/r.docx', '张三', '2026-11-04', '班组'),
       'export_report',
-      { ids: [1], path: '/tmp/r.docx', inspector: '张三', date: '2026-11-04', org: '班组' }
+      { ids: [1], path: '/tmp/r.docx', inspector: '张三', date: '2026-11-04', org: '班组', withImages: false }
+    ],
+    [
+      () => api.exportReport([1], '/tmp/r.docx', '张三', '2026-11-04', '班组', true),
+      'export_report',
+      { ids: [1], path: '/tmp/r.docx', inspector: '张三', date: '2026-11-04', org: '班组', withImages: true }
     ]
   ]
 
@@ -130,4 +139,10 @@ test('文件对话框走 tauri 内部命令', async () => {
   inner = mock.last().message
   assert.equal(inner.cmd, 'saveDialog')
   assert.equal(inner.options.defaultPath, 'a.csv')
+
+  mock.setHandler(() => '/tmp/l.csv')
+  assert.equal(await api.pickCsv(), '/tmp/l.csv')
+  inner = mock.last().message
+  assert.equal(inner.cmd, 'openDialog')
+  assert.deepEqual(inner.options.filters[0].extensions, ['csv'])
 })

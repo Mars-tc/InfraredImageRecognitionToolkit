@@ -5,17 +5,27 @@ import { useImageStore } from '../stores/image.js'
 import { useRoiStore } from '../stores/roi.js'
 import { pickImage, pickSave, exportCsv, exportAnnotated } from '../api/tauri.js'
 import { fmtTemp } from '../utils/format.js'
-import { buildTempMarks } from '../utils/tempMarks.js'
+import { buildSpotMarks, buildTempMarks } from '../utils/tempMarks.js'
+import { buildLedgerDraft } from '../utils/ledgerDraft.js'
 import CanvasView from './CanvasView.vue'
 import ColorScale from './ColorScale.vue'
 import RoiPanel from './RoiPanel.vue'
 import MetaPanel from './MetaPanel.vue'
+import LedgerSaveDialog from './LedgerSaveDialog.vue'
 
 const store = useImageStore()
 const roiStore = useRoiStore()
 const dragging = ref(false)
+const ledgerOpen = ref(false)
 const emissivityInput = ref(0.95)
 const distanceInput = ref(5)
+const ledgerDraft = computed(() =>
+  buildLedgerDraft({
+    meta: store.meta,
+    roi: roiStore.selectedRoi,
+    extrema: store.extrema
+  })
+)
 
 onMounted(() => {
   store.autoLoadFromUrl()
@@ -92,7 +102,7 @@ async function onExportPng() {
   try {
     const path = await pickSave(`${base}_标注图.png`, ['png'])
     if (!path) return
-    // 与画布所见一致：开关关闭时不带标注，导出侧用 ASCII 标签 + RGB 颜色
+    // 与画布所见一致：开关关闭时不带极值标注，导出侧用 ASCII 标签 + RGB 颜色
     const marks = store.showTempMarks
       ? buildTempMarks({
           extrema: store.extrema,
@@ -100,7 +110,12 @@ async function onExportPng() {
           selectedId: roiStore.selectedId
         }).map((m) => ({ x: m.x, y: m.y, label: m.ascii, color: m.rgb }))
       : []
-    await exportAnnotated(path, roiStore.rois.map((r) => r.shape), marks)
+    // 点测温是用户显式标记，不受极值标注开关影响
+    const spotMarks = buildSpotMarks({
+      spots: roiStore.spots,
+      tempAt: (x, y) => store.tempAt(x, y)
+    }).map((m) => ({ x: m.x, y: m.y, label: m.ascii, color: m.rgb }))
+    await exportAnnotated(path, roiStore.rois.map((r) => r.shape), [...marks, ...spotMarks])
     ElMessage.success('标注图已导出')
   } catch (e) {
     ElMessage.error(typeof e === 'string' ? e : e?.message || '导出失败')
@@ -114,6 +129,7 @@ async function onExportPng() {
       <el-button type="primary" :icon="'FolderOpened'" @click="onImport">导入辐射原图</el-button>
       <el-button :icon="'Download'" :disabled="!store.hasImage" @click="onExportCsv">导出 CSV</el-button>
       <el-button :icon="'Picture'" :disabled="!store.hasImage" @click="onExportPng">导出标注图</el-button>
+      <el-button :icon="'Notebook'" :disabled="!store.hasImage" @click="ledgerOpen = true">存入台账</el-button>
       <div class="toolbar-spacer" />
       <div class="toolbar-field">
         <span class="field-label">发射率</span>
@@ -160,6 +176,8 @@ async function onExportPng() {
       <span class="status-file">{{ statusText }}</span>
       <span class="status-hover">{{ hoverText }}</span>
     </footer>
+
+    <LedgerSaveDialog v-model="ledgerOpen" :draft="ledgerDraft" />
   </div>
 </template>
 

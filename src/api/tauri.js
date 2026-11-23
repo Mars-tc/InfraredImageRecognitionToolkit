@@ -83,6 +83,15 @@ export async function pickFolder() {
   return null
 }
 
+/** 打开 CSV 文件选择对话框，返回路径或 null */
+export async function pickCsv() {
+  const selected = await callDialog('打开 CSV 文件对话框', open, {
+    multiple: false,
+    filters: [{ name: 'CSV 文件', extensions: ['csv'] }]
+  })
+  return typeof selected === 'string' ? selected : null
+}
+
 /** 打开保存文件对话框 */
 export async function pickSave(defaultName, extensions = ['csv']) {
   return await callDialog('打开保存对话框', save, {
@@ -125,6 +134,11 @@ export function setDistance(value) {
 /** F5/F10：ROI 统计（矩形/多边形/线段） */
 export function roiStats(shape) {
   return safeInvoke('roi_stats', { shape })
+}
+
+/** 线段 ROI 沿路径的温度剖面 */
+export function lineProfile(shape) {
+  return safeInvoke('line_profile', { shape })
 }
 
 /** 整张图的最高温 / 最低温及其像素坐标（画布温度标注用） */
@@ -177,6 +191,21 @@ export function ledgerAdd(input) {
   return safeInvoke('ledger_add', { input })
 }
 
+/** F15：批量新增台账记录 */
+export function ledgerAddMany(inputs) {
+  return safeInvoke('ledger_add_many', { inputs })
+}
+
+/** F15：导出台账 CSV */
+export function exportLedgerCsv(path) {
+  return safeInvoke('export_ledger_csv', { path })
+}
+
+/** F15：导入台账 CSV */
+export function importLedgerCsv(path) {
+  return safeInvoke('import_ledger_csv', { path })
+}
+
 /** F15：查询台账 */
 export function ledgerQuery(keyword = '', level = null, limit = 200, offset = 0) {
   return safeInvoke('ledger_query', { keyword, level, limit, offset })
@@ -197,9 +226,9 @@ export function ledgerDelete(id) {
   return safeInvoke('ledger_delete', { id })
 }
 
-/** F16：导出 Word 缺陷报告 */
-export function exportReport(ids, path, inspector, date, org) {
-  return safeInvoke('export_report', { ids, path, inspector, date, org })
+/** F16：导出 Word 缺陷报告（withImages 时附缺陷图片） */
+export function exportReport(ids, path, inspector, date, org, withImages = false) {
+  return safeInvoke('export_report', { ids, path, inspector, date, org, withImages })
 }
 
 /** base64 -> Float32Array（小端） */

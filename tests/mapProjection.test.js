@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   isValidCoord, toPoints, computeBounds, createProjection, projectPoint,
-  projectPoints, fitTransform, zoomAt, gridTicks, formatCoord
+  projectPoints, clusterPoints, fitTransform, zoomAt, gridTicks, formatCoord
 } from '../src/utils/mapProjection.js'
 
 const items = [
@@ -105,4 +105,24 @@ test('gridTicks / formatCoord：刻度顺序、退化范围与方位符号', () 
   assert.equal(formatCoord(111.755511474, 'lon'), '111.75551°E')
   assert.equal(formatCoord(-111.7555, 'lon'), '111.75550°W')
   assert.equal(formatCoord(undefined, 'lon'), '--')
+})
+
+test('clusterPoints：同网格合并计数、跨网格分开、边界输入', () => {
+  const pts = [
+    { id: 'a', x: 0, y: 0 },
+    { id: 'b', x: 5, y: 5 },
+    { id: 'c', x: 30, y: 0 },
+    { id: 'd', x: 26, y: 2 }
+  ]
+  const clusters = clusterPoints(pts, 24)
+  assert.equal(clusters.length, 2, '应聚成 2 个网格')
+  const first = clusters.find((c) => c.id === 'a')
+  assert.equal(first.count, 2, '同网格两点合并')
+  assert.equal(first.item, undefined, '代表点保留原字段')
+  const second = clusters.find((c) => c.id === 'c')
+  assert.equal(second.count, 2)
+
+  assert.deepEqual(clusterPoints([], 24), [])
+  assert.equal(clusterPoints([{ id: 'x', x: 0, y: 0 }], 0).length, 1, '非法 cell 回退 24')
+  assert.equal(clusterPoints([{ id: 'x', x: 0, y: 0 }], 'bad').length, 1)
 })

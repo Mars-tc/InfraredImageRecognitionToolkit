@@ -30,6 +30,12 @@ export const useLedgerStore = defineStore('ledger', () => {
     return id
   }
 
+  async function addMany(inputs) {
+    const n = await api.ledgerAddMany(inputs)
+    await refresh()
+    return n
+  }
+
   async function update(id, input) {
     await api.ledgerUpdate(id, input)
     await refresh()
@@ -48,6 +54,6 @@ export const useLedgerStore = defineStore('ledger', () => {
 
   return {
     records, levelCounts, keyword, levelFilter, loading, error,
-    refresh, add, update, remove, setFilter
+    refresh, add, addMany, update, remove, setFilter
   }
 })

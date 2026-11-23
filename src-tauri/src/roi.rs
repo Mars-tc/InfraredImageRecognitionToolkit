@@ -56,11 +56,25 @@ pub fn scan(
     shape: Option<&RoiShape>,
 ) -> AppResult<Scan> {
     let mut acc = Acc::default();
+    for_each_pixel(temps, width, height, shape, |col, row, t| acc.push(t, col, row))?;
+    acc.finish()
+}
+
+/// 遍历 ROI 覆盖的像素（shape 为 None 时遍历整图）。
+///
+/// 统计、直方图共用同一套掩码规则，避免两处实现产生不一致的像素集合。
+fn for_each_pixel<F: FnMut(usize, usize, f32)>(
+    temps: &[f32],
+    width: usize,
+    height: usize,
+    shape: Option<&RoiShape>,
+    mut f: F,
+) -> AppResult<()> {
     match shape {
         None => {
             for row in 0..height {
                 for col in 0..width {
-                    acc.push(temps[row * width + col], col, row);
+                    f(col, row, temps[row * width + col]);
                 }
             }
         }
@@ -73,7 +87,7 @@ pub fn scan(
             let iy1 = (y1.min(height as f64).ceil() as usize).min(height);
             for row in iy0..iy1 {
                 for col in ix0..ix1 {
-                    acc.push(temps[row * width + col], col, row);
+                    f(col, row, temps[row * width + col]);
                 }
             }
         }
@@ -84,7 +98,7 @@ pub fn scan(
             for row in 0..height {
                 for col in 0..width {
                     if point_in_polygon(col as f64 + 0.5, row as f64 + 0.5, points) {
-                        acc.push(temps[row * width + col], col, row);
+                        f(col, row, temps[row * width + col]);
                     }
                 }
             }
@@ -94,7 +108,7 @@ pub fn scan(
                 return Err("线段至少需要 2 个点".to_string());
             }
             for pair in points.windows(2) {
-                let (mut x0, mut y0) = pair[0];
+                let (x0, y0) = pair[0];
                 let (x1, y1) = pair[1];
                 let steps = ((x1 - x0).abs().max((y1 - y0).abs()) * 2.0).ceil() as usize;
                 let steps = steps.max(1);
@@ -105,19 +119,90 @@ pub fn scan(
                     let col = px.floor() as isize;
                     let row = py.floor() as isize;
                     if col >= 0 && row >= 0 && (col as usize) < width && (row as usize) < height {
-                        acc.push(
-                            temps[row as usize * width + col as usize],
+                        f(
                             col as usize,
                             row as usize,
+                            temps[row as usize * width + col as usize],
                         );
                     }
-                    x0 = px;
-                    y0 = py;
                 }
             }
         }
     }
-    acc.finish()
+    Ok(())
+}
+
+/// ROI 温度直方图（固定分桶数由调用方决定）
+#[derive(Debug, Serialize, Clone)]
+pub struct Histogram {
+    pub min: f64,
+    pub max: f64,
+    /// 各桶计数，从 min 到 max 均分
+    pub counts: Vec<u32>,
+}
+
+/// 统计 ROI 覆盖像素的温度分布；`bins` 为分桶数量（至少 1）。
+pub fn histogram(
+    temps: &[f32],
+    width: usize,
+    height: usize,
+    shape: Option<&RoiShape>,
+    bins: usize,
+) -> AppResult<Histogram> {
+    let bins = bins.max(1);
+    let stats = scan(temps, width, height, shape)?.stats;
+    let (min, max) = (stats.min, stats.max);
+    let span = max - min;
+    let mut counts = vec![0u32; bins];
+    for_each_pixel(temps, width, height, shape, |_, _, t| {
+        if !t.is_finite() {
+            return;
+        }
+        let idx = if span > 0.0 {
+            (((t as f64 - min) / span) * bins as f64).floor() as usize
+        } else {
+            0
+        };
+        counts[idx.min(bins - 1)] += 1;
+    })?;
+    Ok(Histogram { min, max, counts })
+}
+
+/// 线段 ROI 沿路径的温度采样值（按主轴每像素 2 点取样）。
+pub fn line_profile(
+    temps: &[f32],
+    width: usize,
+    height: usize,
+    shape: &RoiShape,
+) -> AppResult<Vec<f32>> {
+    let points = match shape {
+        RoiShape::Line { points } => points,
+        _ => return Err("仅线段 ROI 支持温度剖面".to_string()),
+    };
+    if points.len() < 2 {
+        return Err("线段至少需要 2 个点".to_string());
+    }
+    let mut out = Vec::new();
+    for pair in points.windows(2) {
+        let (x0, y0) = pair[0];
+        let (x1, y1) = pair[1];
+        let steps = ((x1 - x0).abs().max((y1 - y0).abs()) * 2.0).ceil() as usize;
+        let steps = steps.max(1);
+        for i in 0..=steps {
+            let t = i as f64 / steps as f64;
+            let px = x0 + (x1 - x0) * t;
+            let py = y0 + (y1 - y0) * t;
+            let col = px.floor() as isize;
+            let row = py.floor() as isize;
+            if col >= 0 && row >= 0 && (col as usize) < width && (row as usize) < height {
+                out.push(temps[row as usize * width + col as usize]);
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err("线段上没有有效像素".to_string());
+    }
+    Ok(out)
 }
 
 /// 对温度矩阵做 ROI 统计（保持原签名，供 batch / diagnosis 复用）
@@ -337,5 +422,40 @@ mod tests {
         let shape = RoiShape::Rect { x: 20.0, y: 20.0, w: 5.0, h: 5.0 };
         assert!(scan(&temps, 10, 10, Some(&shape)).is_err());
         assert!(roi_stats(&temps, 10, 10, &shape).is_err());
+    }
+
+    #[test]
+    fn histogram_counts_match_roi_pixels() {
+        let temps = matrix(10, 10, |c, r| (c + r) as f32);
+        let shape = RoiShape::Rect { x: 0.0, y: 0.0, w: 3.0, h: 3.0 };
+        let stats = roi_stats(&temps, 10, 10, &shape).unwrap();
+        let hist = histogram(&temps, 10, 10, Some(&shape), 4).unwrap();
+        assert_eq!(hist.counts.len(), 4);
+        assert_eq!(hist.counts.iter().sum::<u32>() as usize, stats.count);
+        assert_eq!(hist.min, stats.min);
+        assert_eq!(hist.max, stats.max);
+        // 3×3 区域温度 0..=4：最高温落在最后一桶
+        assert!(hist.counts[3] >= 1);
+    }
+
+    #[test]
+    fn histogram_uniform_temperature_uses_first_bin() {
+        let temps = matrix(4, 4, |_, _| 30.0);
+        let hist = histogram(&temps, 4, 4, None, 8).unwrap();
+        assert_eq!(hist.counts.iter().sum::<u32>(), 16);
+        assert_eq!(hist.counts[0], 16);
+        assert!(hist.counts[1..].iter().all(|&c| c == 0));
+    }
+
+    #[test]
+    fn line_profile_samples_endpoints() {
+        let temps = matrix(10, 10, |c, _| c as f32);
+        let shape = RoiShape::Line { points: vec![(0.0, 5.0), (9.0, 5.0)] };
+        let profile = line_profile(&temps, 10, 10, &shape).unwrap();
+        assert!(profile.len() >= 10, "len={}", profile.len());
+        assert_eq!(profile[0], 0.0);
+        assert_eq!(*profile.last().unwrap(), 9.0);
+        // 仅线段支持剖面
+        assert!(line_profile(&temps, 10, 10, &RoiShape::Rect { x: 0.0, y: 0.0, w: 2.0, h: 2.0 }).is_err());
     }
 }

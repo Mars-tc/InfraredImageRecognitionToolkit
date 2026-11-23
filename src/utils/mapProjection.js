@@ -79,6 +79,22 @@ export function projectPoints(points, bounds, width, height, padding = 48) {
   return points.map((p) => ({ ...p, ...projectPoint(proj, p.lat, p.lon) }))
 }
 
+/**
+ * 屏幕网格聚合：把同一 cell×cell 网格内的点合并为一个代表点，返回 { ...point, count }。
+ * 用于点位地图，避免数千 SVG 标记导致主线程卡顿。
+ */
+export function clusterPoints(points = [], cell = 24) {
+  const size = Math.max(1, Number(cell) || 24)
+  const cells = new Map()
+  for (const p of points) {
+    const key = `${Math.floor(p.x / size)}:${Math.floor(p.y / size)}`
+    const hit = cells.get(key)
+    if (hit) hit.count += 1
+    else cells.set(key, { ...p, count: 1 })
+  }
+  return [...cells.values()]
+}
+
 /** 适应视图复位 */
 export function fitTransform() {
   return { scale: 1, tx: 0, ty: 0 }
