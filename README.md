@@ -88,15 +88,15 @@ node scripts/e2e-cdp.mjs                    # 终端 2（headless Chrome + mock 
 
 ## 交付构建（GitHub Actions）
 
-UOS20 内网机的安装包由 **GitHub Actions** 在 Debian 10 容器中构建，产物下载后拷入内网即可安装：
+UOS20 内网机的安装包由 **GitHub Actions** 在 Debian 10 容器中按 amd64 / arm64 矩阵构建，产物下载后拷入内网即可安装：
 
 - 流水线：`.github/workflows/build-uos20.yml`（`debian:buster` 容器，glibc 2.28，与 UOS20 同源）
 - 触发：Actions 页手动 `Run workflow`；push 到 `main` 或提 PR 做构建校验；推送 `v*` 标签额外发布 GitHub Release
-- 产物：`ir-inspection-tool_0.1.0_amd64.deb`（必需）、`ir-inspection-tool_0.1.0_amd64.AppImage`（可选）、`SHA256SUMS`
+- 产物：`ir-inspection-tool_<version>_amd64.deb`、`ir-inspection-tool_<version>_arm64.deb`、`SHA256SUMS`（`<version>` 取自 `package.json`）
 - 工具链：Node 20.19+、`pnpm@10.24.0`、Rust 1.90、项目自带的 `@tauri-apps/cli` 1.6.3（Tauri 1.x CLI 的最终发布版；cargo 版 `tauri-cli` 也只到 1.6.x）
 - 校验：流水线把 deb 的 `Package` 字段规范化为 ASCII 并断言合法，同时断言产物最高 GLIBC 符号版本 ≤ 2.28，任一不满足即判定构建失败
 
-**本机构建不产出交付包**：开发机 glibc 高于 UOS20（如 Deepin 25 为 2.38），AppImage 同样依赖宿主 glibc。完整说明与内网安装步骤见 [`packaging/README.md`](packaging/README.md)。
+**本机构建不产出交付包**：开发机 glibc 高于 UOS20（如 Deepin 25 为 2.38）。完整说明与内网安装步骤见 [`packaging/README.md`](packaging/README.md)。
 
 ## 数据落盘位置
 
@@ -205,6 +205,6 @@ pnpm test:e2e             # E2E 现状核查
 - 离线点位地图为纯 SVG 绘制，无底图、无外网瓦片；仅展示带有效 GPS 的点位，无坐标项单独计数提示。
 - 点位弹窗缩略图按需懒加载并缓存，仅支持 `.jpg` / `.jpeg`、单文件 ≤64MB、长边默认 320px（钳制 64~1024），失败时降级为占位图。
 - 批量解析为顺序执行（100 张内无感），后续可换 rayon 并行。
-- 交付给 UOS20 的安装包必须来自 GitHub Actions 流水线（Debian 10 环境）；本机直接构建的 deb / AppImage 因 glibc 过高无法安装到目标机。
-- AppImage 为可选产物：linuxdeploy 在构建容器内不可用时不会产出，deb 为必需产物。
+- 交付给 UOS20 的安装包必须来自 GitHub Actions 流水线（Debian 10 环境，amd64 / arm64 双架构）；本机直接构建的 deb 因 glibc 过高无法安装到目标机。
+- 流水线只产出 deb（每架构一个），不构建 AppImage。
 - 交付构建过程需要联网拉取依赖（GitHub Actions 环境），但产物本身不含任何运行时外网依赖，安装后完全离线可用。

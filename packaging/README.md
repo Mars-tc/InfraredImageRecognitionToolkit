@@ -1,6 +1,6 @@
 # 交付构建与内网安装（GitHub Actions）
 
-交付给统信 UOS20（Debian 10 底层）的安装包由 **GitHub Actions** 统一产出，本机不再维护 Docker 构建链。
+交付给统信 UOS20（Debian 10 底层，amd64 / arm64 双架构）的 deb 安装包由 **GitHub Actions** 统一产出，本机不再维护 Docker 构建链。
 
 ## 为什么要云端构建
 
@@ -9,50 +9,48 @@
 | 交付构建（Debian 10 / buster 容器） | 2.28 | 可以 |
 | 开发机直接构建（当前开发机为 Deepin 25） | 2.38 | 不可以，会报 `GLIBC_2.XX not found` |
 
-AppImage 同样依赖宿主的 glibc（不自带 glibc），因此也必须在 Debian 10 环境构建。
+流水线只产出 deb（amd64 / arm64 各一个），不构建 AppImage。
 
 ## 一、触发构建
 
 - **手动**：仓库 Actions 页 → `build-uos20` → `Run workflow`。
-- **自动**：push 到 `main` 或提 PR 做构建校验；推送 `v*` 标签（如 `v0.1.0`）会额外发布 GitHub Release。
-- 两种方式的产物都会作为 artifact（`uos20-installers`）保留 30 天。
+- **自动**：push 到 `main` 或提 PR 做构建校验；推送 `v*` 标签（如 `v<version>`）会额外发布 GitHub Release。
+- 两种方式的产物都会作为 artifact（`uos20-installers-amd64` / `uos20-installers-arm64`）保留 30 天。
 
 ## 二、流水线做了什么（`.github/workflows/build-uos20.yml`）
 
-1. 在 `debian:buster` 容器内构建（buster 已 EOL，脚本自动把 apt 源切到 `archive.debian.org`）；
+1. 在 `debian:buster` 容器内按 amd64 / arm64 矩阵原生构建（buster 已 EOL，脚本自动把 apt 源切到 `archive.debian.org`）；
 2. 安装 Node 20.19+（Vite 8 要求 `^20.19 || >=22.12`）、`pnpm@10.24.0`、Rust 1.90（`image 0.25` 要求 ≥ 1.88）；
 3. `pnpm install --frozen-lockfile` 后用项目自带的 `@tauri-apps/cli` 1.6.3 执行 `pnpm tauri build --bundles deb`（Tauri 1.x 的 npm/cargo CLI 均止于 1.6.x，无需额外安装）；
 4. 把 `DEBIAN/control` 的 `Package` 字段规范化为 `ir-inspection-tool`（中文 `productName` 会被 dpkg 判为非法包名），并断言包名合法；
 5. 校验产物依赖的最高 GLIBC 符号版本不得超过 2.28，超出即判定构建失败；
-6. 额外尝试打包 AppImage（可选产物，失败不阻塞 deb）；
-7. 产物重命名为 ASCII 文件名并生成 `SHA256SUMS`。
+6. 断言 deb 的 `Architecture` 与矩阵一致，产物重命名为 ASCII 文件名并生成 `SHA256SUMS`。
 
 ## 三、产物
 
+`<version>` 取自 `package.json` 的 `version` 字段，由流水线运行时读取，文档不写死。
+
 | 文件 | 说明 |
 | --- | --- |
-| `ir-inspection-tool_0.1.0_amd64.deb` | UOS20 离线安装包（必需产物） |
-| `ir-inspection-tool_0.1.0_amd64.AppImage` | 免安装可执行包（可选产物，视 linuxdeploy 在容器内的可用性） |
-| `SHA256SUMS` | 校验和 |
+| `ir-inspection-tool_<version>_amd64.deb` | UOS20 amd64 离线安装包 |
+| `ir-inspection-tool_<version>_arm64.deb` | UOS20 arm64 离线安装包 |
+| `SHA256SUMS` | 校验和（各架构 artifact 内各一份） |
 
 ## 四、内网分发与安装
 
 ```bash
-# 1. 在联网侧从 GitHub 下载产物，拷贝进内网
+# 1. 在联网侧从 GitHub 下载对应架构产物，拷贝进内网
 sha256sum -c SHA256SUMS
 
-# 2. UOS20 内网机离线安装
-sudo dpkg -i ir-inspection-tool_0.1.0_amd64.deb
+# 2. UOS20 内网机离线安装（按机器架构选择其一）
+sudo dpkg -i ir-inspection-tool_<version>_amd64.deb
+sudo dpkg -i ir-inspection-tool_<version>_arm64.deb
 # 若提示缺 libwebkit2gtk-4.0-37，先从 UOS20 官方源离线拉取该包及依赖再安装
 
 # 若手上是早期产物（Package 字段为中文），可就地修正后重打包再安装：
 dpkg-deb -R 旧包.deb /tmp/deb-fix
 sed -i 's/^Package: .*/Package: ir-inspection-tool/' /tmp/deb-fix/DEBIAN/control
-dpkg-deb -b /tmp/deb-fix ir-inspection-tool_0.1.0_amd64.deb
-
-# 3. AppImage 方式（免安装）
-chmod +x ir-inspection-tool_0.1.0_amd64.AppImage
-./ir-inspection-tool_0.1.0_amd64.AppImage
+dpkg-deb -b /tmp/deb-fix ir-inspection-tool_<version>_<arch>.deb
 ```
 
 安装后的应用仍然**纯离线运行**：不访问任何外部服务，离线点位地图为纯 SVG 绘制、无底图瓦片。构建过程本身需要联网拉取依赖，但产物不携带任何运行时外网依赖。
@@ -77,7 +75,6 @@ node scripts/build-local.mjs test     # 跑全部自动化验收
 | --- | --- |
 | 构建在 GLIBC 断言步骤失败 | 构建环境被改动，产物不再兼容 UOS20；确认流水线仍使用 `debian:buster` |
 | deb 安装提示缺 `libwebkit2gtk-4.0-37` | 从 UOS20 官方源离线拉取该包及依赖后重装 |
-| 没有 AppImage 产物 | linuxdeploy 在容器内不可用时属预期，deb 为必需产物 |
 | 本机 `pnpm` 找不到 | 执行 `corepack enable pnpm`（按 package.json 的 packageManager 自动准备 pnpm@10.24.0） |
 | 本机 `cargo` 找不到 | `build-local.mjs` 已自动注入 `~/.cargo/bin`，或手动 `export PATH="$HOME/.cargo/bin:$PATH"` |
 | `dpkg -i` 报 `invalid package name` / 包名必须以字母或数字开头 | 早期产物的 `Package` 字段是中文；下载最新 CI 产物，或按「四、内网分发与安装」中的命令就地修正 control 后重打包 |

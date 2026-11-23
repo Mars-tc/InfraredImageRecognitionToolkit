@@ -1,7 +1,7 @@
 name: build-uos20
 
 # 交付构建：在 Debian 10 (buster, glibc 2.28) 环境中编译，
-# 产出可直接在统信 UOS20（Debian 10 底层）安装的 deb / AppImage。
+# 产出可直接在统信 UOS20（Debian 10 底层，amd64 / arm64 双架构）安装的 deb。
 # 本机（Deepin 25, glibc 2.38）编译的产物 glibc 过高，无法安装到 UOS20，
 # 因此交付包统一由本流水线产出，详见 README「交付构建」章节。
 
@@ -27,8 +27,20 @@ env:
 
 jobs:
   build:
-    name: 构建 UOS20 安装包（Debian 10 / glibc 2.28）
-    runs-on: ubuntu-22.04
+    name: 构建 UOS20 deb（${{ matrix.arch }} / glibc 2.28）
+    runs-on: ${{ matrix.runner }}
+    # 双架构矩阵：amd64 走 x64 托管 runner，arm64 走 GitHub 托管 arm64 runner（公开仓库可用）。
+    # 两任务相互独立，任一失败不取消另一个。
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+            node_arch: x64
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            node_arch: arm64
     container:
       image: debian:buster
     steps:
@@ -53,7 +65,7 @@ jobs:
       - name: 安装 Node.js
         run: |
           set -eux
-          curl -fsSL "https://nodejs.org/dist/v${NODE_BUILD_VERSION}/node-v${NODE_BUILD_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz
+          curl -fsSL "https://nodejs.org/dist/v${NODE_BUILD_VERSION}/node-v${NODE_BUILD_VERSION}-linux-${{ matrix.node_arch }}.tar.xz" -o /tmp/node.tar.xz
           tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
           rm /tmp/node.tar.xz
           node -v
@@ -91,7 +103,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: cargo-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
@@ -149,21 +161,19 @@ jobs:
             exit 1
           fi
 
-      - name: 构建 AppImage（可选产物，失败不阻塞 deb）
-        continue-on-error: true
-        run: pnpm tauri build --bundles appimage
-
       - name: 收集产物并生成校验和
         run: |
           set -eux
           VERSION=$(node -p "require('./package.json').version")
           mkdir -p dist-artifacts
           DEB=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
-          cp "${DEB}" "dist-artifacts/ir-inspection-tool_${VERSION}_amd64.deb"
-          if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
-            cp "$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)" \
-               "dist-artifacts/ir-inspection-tool_${VERSION}_amd64.AppImage"
+          # 断言产物架构与矩阵一致，避免 arm64 任务误用 x64 产物（或反之）
+          PKG_ARCH=$(dpkg-deb -f "${DEB}" Architecture)
+          if [ "${PKG_ARCH}" != "${{ matrix.arch }}" ]; then
+            echo "错误：deb Architecture=${PKG_ARCH}，期望 ${{ matrix.arch }}"
+            exit 1
           fi
+          cp "${DEB}" "dist-artifacts/ir-inspection-tool_${VERSION}_${{ matrix.arch }}.deb"
           cd dist-artifacts
           rm -f SHA256SUMS
           sha256sum ./* > SHA256SUMS
@@ -215,7 +225,7 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: uos20-installers
+          name: uos20-installers-${{ matrix.arch }}
           path: dist-artifacts/
           retention-days: 30
 
@@ -230,8 +240,9 @@ jobs:
       - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
-          name: uos20-installers
+          pattern: uos20-installers-*
           path: dist-artifacts
+          merge-multiple: true
 
       - name: 发布 Release
         uses: softprops/action-gh-release@v2
