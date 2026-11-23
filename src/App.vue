@@ -1,14 +1,25 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Setting } from '@element-plus/icons-vue'
 import AnalysisView from './components/AnalysisView.vue'
 import BatchPanel from './components/BatchPanel.vue'
 import LedgerPanel from './components/LedgerPanel.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import { useViewStore } from './stores/view.js'
+import { probeBackend } from './api/tauri.js'
 
 const view = useViewStore()
 const settingsOpen = ref(false)
+
+onMounted(async () => {
+  // 启动探活：窗口与后端失联（旧窗口残留）时立即明确提示，而不是按钮点了没反应
+  try {
+    await probeBackend()
+  } catch (e) {
+    ElMessage.error({ message: e?.message || '后端未连接', duration: 8000, showClose: true })
+  }
+})
 
 const views = [
   { key: 'analysis', label: '图像分析', icon: 'Picture' },

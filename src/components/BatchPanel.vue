@@ -26,7 +26,13 @@ watch(
 )
 
 async function chooseFolder() {
-  const dir = await pickFolder()
+  let dir
+  try {
+    dir = await pickFolder()
+  } catch (e) {
+    ElMessage.error(e?.message || '选择文件夹失败')
+    return
+  }
   if (!dir) return
   settings.load()
   await batch.start(dir, recursive.value)
@@ -38,7 +44,13 @@ async function chooseFolder() {
 }
 
 async function onExportBatchCsv() {
-  const path = await pickSave('批量解析结果.csv', ['csv'])
+  let path
+  try {
+    path = await pickSave('批量解析结果.csv', ['csv'])
+  } catch (e) {
+    ElMessage.error(e?.message || '导出失败')
+    return
+  }
   if (!path) return
   try {
     const rows = batch.items.map((it) => ({

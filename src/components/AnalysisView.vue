@@ -46,8 +46,12 @@ const hoverText = computed(() => {
 })
 
 async function onImport() {
-  const path = await pickImage()
-  if (path) await store.load(path)
+  try {
+    const path = await pickImage()
+    if (path) await store.load(path)
+  } catch (e) {
+    ElMessage.error(e?.message || '导入失败')
+  }
 }
 
 function onDrop(e) {
@@ -72,22 +76,22 @@ async function applyDistance() {
 // F8：导出温度矩阵 CSV
 async function onExportCsv() {
   const base = (store.meta?.file_name || 'image').replace(/\.jpe?g$/i, '')
-  const path = await pickSave(`${base}_温度矩阵.csv`, ['csv'])
-  if (!path) return
   try {
+    const path = await pickSave(`${base}_温度矩阵.csv`, ['csv'])
+    if (!path) return
     const n = await exportCsv(path)
     ElMessage.success(`已导出 ${n} 个像素的温度矩阵`)
   } catch (e) {
-    ElMessage.error(typeof e === 'string' ? e : '导出失败')
+    ElMessage.error(typeof e === 'string' ? e : e?.message || '导出失败')
   }
 }
 
 // F8：导出带 ROI 标注的红外 PNG
 async function onExportPng() {
   const base = (store.meta?.file_name || 'image').replace(/\.jpe?g$/i, '')
-  const path = await pickSave(`${base}_标注图.png`, ['png'])
-  if (!path) return
   try {
+    const path = await pickSave(`${base}_标注图.png`, ['png'])
+    if (!path) return
     // 与画布所见一致：开关关闭时不带标注，导出侧用 ASCII 标签 + RGB 颜色
     const marks = store.showTempMarks
       ? buildTempMarks({
@@ -99,7 +103,7 @@ async function onExportPng() {
     await exportAnnotated(path, roiStore.rois.map((r) => r.shape), marks)
     ElMessage.success('标注图已导出')
   } catch (e) {
-    ElMessage.error(typeof e === 'string' ? e : '导出失败')
+    ElMessage.error(typeof e === 'string' ? e : e?.message || '导出失败')
   }
 }
 </script>

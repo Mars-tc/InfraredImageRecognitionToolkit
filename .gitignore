@@ -9,6 +9,9 @@ src-tauri/.cargo/
 e2e/chrome-profile/
 e2e/*.log
 
+# 本地临时脚本
+scripts/
+
 # 日志与截图
 *.log
 screenshot-*.png

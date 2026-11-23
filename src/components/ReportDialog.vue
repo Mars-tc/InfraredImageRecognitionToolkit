@@ -30,7 +30,13 @@ async function onExport() {
     return
   }
   const name = `红外检测缺陷报告_${date.value}.docx`
-  const path = await pickSave(name, ['docx'])
+  let path
+  try {
+    path = await pickSave(name, ['docx'])
+  } catch (e) {
+    ElMessage.error(e?.message || '导出失败')
+    return
+  }
   if (!path) return
   exporting.value = true
   try {
